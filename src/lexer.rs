@@ -44,6 +44,24 @@ pub struct Token {
     pub span: Span,
 }
 
+pub fn comment_spans(input: &str) -> Vec<Span> {
+    let mut spans = Vec::new();
+    let bytes = input.as_bytes();
+    let mut pos = 0;
+    while pos < bytes.len() {
+        if bytes[pos] == b'#' {
+            let start = pos;
+            while pos < bytes.len() && bytes[pos] != b'\n' {
+                pos += 1;
+            }
+            spans.push(Span { start, end: pos });
+        } else {
+            pos += 1;
+        }
+    }
+    spans
+}
+
 pub fn lex(input: &str) -> Result<Vec<Token>, SpannedError> {
     let mut tokens = Vec::new();
     let bytes = input.as_bytes();

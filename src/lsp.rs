@@ -4,6 +4,7 @@ use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
 use baselang::ast::{BinOp, Expr, Span, Spanned, Stmt};
+use baselang::lexer;
 use baselang::parser;
 
 // -- Semantic token types --
@@ -13,6 +14,7 @@ const NUMBER: u32 = 2;
 const OPERATOR: u32 = 3;
 const FUNCTION: u32 = 4;
 const PARAMETER: u32 = 5;
+const COMMENT: u32 = 6;
 
 const TOKEN_TYPES: &[SemanticTokenType] = &[
     SemanticTokenType::KEYWORD,
@@ -21,6 +23,7 @@ const TOKEN_TYPES: &[SemanticTokenType] = &[
     SemanticTokenType::OPERATOR,
     SemanticTokenType::FUNCTION,
     SemanticTokenType::PARAMETER,
+    SemanticTokenType::COMMENT,
 ];
 
 struct Backend {
@@ -124,6 +127,9 @@ impl LanguageServer for Backend {
         let mut tokens = Vec::new();
         for stmt in stmts {
             collect_stmt_tokens(stmt, &mut tokens);
+        }
+        for span in lexer::comment_spans(text) {
+            tokens.push((span.start, span.end - span.start, COMMENT));
         }
         tokens.sort_by_key(|t| t.0);
 
