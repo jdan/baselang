@@ -15,6 +15,14 @@ vim.api.nvim_create_autocmd('FileType', {
   end,
 })
 
+vim.api.nvim_create_user_command('BaselangRestart', function()
+  for _, client in ipairs(vim.lsp.get_clients({ name = 'baselang' })) do
+    client:stop()
+  end
+  -- Re-trigger FileType so vim.lsp.start() runs again
+  vim.cmd('edit')
+end, {})
+
 vim.api.nvim_create_autocmd('LspAttach', {
   callback = function(args)
     local client = vim.lsp.get_client_by_id(args.data.client_id)
