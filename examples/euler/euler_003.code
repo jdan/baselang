@@ -1,0 +1,17 @@
+# Project Euler Problem 3
+# What is the largest prime factor of 600851475143?
+#
+# Trial division: divide out the smallest factor repeatedly.
+# Whatever remains at the end is the largest prime factor.
+
+n = 600851475143
+d = 2
+
+while d * d <= n
+  while n % d == 0
+    n = n / d
+  end
+  d += 1
+end
+
+print n

@@ -1,0 +1,15 @@
+# Project Euler Problem 6
+# Find the difference between the square of the sum and the sum of the squares
+# for the first 100 natural numbers.
+#
+# (1+2+...+100)^2 - (1^2 + 2^2 + ... + 100^2)
+
+sum_of_squares = 0
+sum = 0
+
+for i from 1 to 101
+  sum_of_squares += i * i
+  sum += i
+end
+
+print sum * sum - sum_of_squares

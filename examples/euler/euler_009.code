@@ -1,0 +1,22 @@
+# Project Euler Problem 9
+# Find the product abc where a^2 + b^2 = c^2 and a + b + c = 1000.
+#
+# For each a and b, compute c = 1000 - a - b and check the Pythagorean condition.
+# Since a < b < c and a+b+c=1000, a can range up to ~333.
+
+result = 0
+
+for a from 1 to 334
+  for b from a to 500
+    c = 1000 - a - b
+    if c > b and a * a + b * b == c * c
+      result = a * b * c
+      break
+    end
+  end
+  if result > 0
+    break
+  end
+end
+
+print result

@@ -1,82 +1,219 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use crate::ast::*;
 
+#[derive(Clone, Debug)]
+pub enum Value {
+    Int(i64),
+    Array(Rc<RefCell<Vec<i64>>>),
+}
+
+impl Value {
+    fn as_int(&self, span: Span) -> Result<i64, SpannedError> {
+        match self {
+            Value::Int(n) => Ok(*n),
+            _ => Err(SpannedError {
+                message: "expected integer, got array".to_string(),
+                span,
+            }),
+        }
+    }
+}
+
+struct FnDef {
+    params: Vec<String>,
+    body: Vec<Spanned<Stmt>>,
+}
+
+enum Flow {
+    Next,
+    Return(Value),
+    Break,
+}
+
+type Env = HashMap<String, Value>;
+type Fns = HashMap<String, FnDef>;
+
 pub fn eval(stmts: &[Spanned<Stmt>]) -> Result<Vec<String>, SpannedError> {
-    let mut env: HashMap<String, i64> = HashMap::new();
-    let mut output: Vec<String> = Vec::new();
-    eval_stmts(stmts, &mut env, &mut output)?;
-    Ok(output)
+    let mut env = Env::new();
+    let mut fns = Fns::new();
+    let mut output = Vec::new();
+    match eval_stmts(stmts, &mut env, &mut fns, &mut output)? {
+        Flow::Next => Ok(output),
+        Flow::Return(_) => Err(SpannedError {
+            message: "return outside of function".to_string(),
+            span: Span { start: 0, end: 0 },
+        }),
+        Flow::Break => Err(SpannedError {
+            message: "break outside of loop".to_string(),
+            span: Span { start: 0, end: 0 },
+        }),
+    }
 }
 
 fn eval_stmts(
     stmts: &[Spanned<Stmt>],
-    env: &mut HashMap<String, i64>,
+    env: &mut Env,
+    fns: &mut Fns,
     output: &mut Vec<String>,
-) -> Result<(), SpannedError> {
+) -> Result<Flow, SpannedError> {
     for stmt in stmts {
-        eval_stmt(stmt, env, output)?;
+        match eval_stmt(stmt, env, fns, output)? {
+            Flow::Next => {}
+            flow => return Ok(flow),
+        }
     }
-    Ok(())
+    Ok(Flow::Next)
 }
 
 fn eval_stmt(
     stmt: &Spanned<Stmt>,
-    env: &mut HashMap<String, i64>,
+    env: &mut Env,
+    fns: &mut Fns,
     output: &mut Vec<String>,
-) -> Result<(), SpannedError> {
+) -> Result<Flow, SpannedError> {
     match &stmt.node {
         Stmt::Assign {
             name, op, value, ..
         } => {
-            let val = eval_expr(value, env)?;
+            let val = eval_expr(value, env, fns, output)?;
             match op {
                 AssignOp::Assign => {
                     env.insert(name.clone(), val);
                 }
                 AssignOp::AddAssign => {
-                    let current = env.get(name).copied().unwrap_or(0);
-                    env.insert(name.clone(), current + val);
+                    let current = env
+                        .get(name)
+                        .map(|v| v.as_int(value.span))
+                        .transpose()?
+                        .unwrap_or(0);
+                    env.insert(name.clone(), Value::Int(current + val.as_int(value.span)?));
                 }
             }
+            Ok(Flow::Next)
         }
         Stmt::For {
             var, from, to, body, ..
         } => {
-            let from_val = eval_expr(from, env)?;
-            let to_val = eval_expr(to, env)?;
+            let from_val = eval_expr(from, env, fns, output)?.as_int(from.span)?;
+            let to_val = eval_expr(to, env, fns, output)?.as_int(to.span)?;
             for i in from_val..to_val {
-                env.insert(var.clone(), i);
-                eval_stmts(body, env, output)?;
+                env.insert(var.clone(), Value::Int(i));
+                match eval_stmts(body, env, fns, output)? {
+                    Flow::Next => {}
+                    Flow::Break => break,
+                    Flow::Return(v) => return Ok(Flow::Return(v)),
+                }
             }
+            Ok(Flow::Next)
         }
-        Stmt::If { cond, body, .. } => {
-            let cond_val = eval_expr(cond, env)?;
-            if cond_val != 0 {
-                eval_stmts(body, env, output)?;
+        Stmt::While { cond, body, .. } => loop {
+            let cond_val = eval_expr(cond, env, fns, output)?.as_int(cond.span)?;
+            if cond_val == 0 {
+                return Ok(Flow::Next);
             }
+            match eval_stmts(body, env, fns, output)? {
+                Flow::Next => {}
+                Flow::Break => return Ok(Flow::Next),
+                Flow::Return(v) => return Ok(Flow::Return(v)),
+            }
+        },
+        Stmt::If { cond, body, .. } => {
+            let cond_val = eval_expr(cond, env, fns, output)?.as_int(cond.span)?;
+            if cond_val != 0 {
+                return eval_stmts(body, env, fns, output);
+            }
+            Ok(Flow::Next)
         }
         Stmt::Print { value, .. } => {
-            let val = eval_expr(value, env)?;
-            output.push(val.to_string());
+            let val = eval_expr(value, env, fns, output)?;
+            output.push(match val {
+                Value::Int(n) => n.to_string(),
+                Value::Array(a) => format!("[array; len={}]", a.borrow().len()),
+            });
+            Ok(Flow::Next)
+        }
+        Stmt::FnDef {
+            name, params, body, ..
+        } => {
+            fns.insert(
+                name.clone(),
+                FnDef {
+                    params: params.iter().map(|(n, _)| n.clone()).collect(),
+                    body: body.clone(),
+                },
+            );
+            Ok(Flow::Next)
+        }
+        Stmt::Return { value, .. } => {
+            let val = eval_expr(value, env, fns, output)?;
+            Ok(Flow::Return(val))
+        }
+        Stmt::Break { .. } => Ok(Flow::Break),
+        Stmt::ExprStmt { value, .. } => {
+            eval_expr(value, env, fns, output)?;
+            Ok(Flow::Next)
+        }
+        Stmt::IndexAssign {
+            name,
+            index,
+            op,
+            value,
+            ..
+        } => {
+            let idx = eval_expr(index, env, fns, output)?.as_int(index.span)?;
+            let val = eval_expr(value, env, fns, output)?.as_int(value.span)?;
+            let arr = env.get(name).ok_or_else(|| SpannedError {
+                message: format!("undefined variable: {name}"),
+                span: stmt.span,
+            })?;
+            if let Value::Array(arr) = arr {
+                let mut arr = arr.borrow_mut();
+                let idx = idx as usize;
+                if idx >= arr.len() {
+                    return Err(SpannedError {
+                        message: format!("index {} out of bounds (len {})", idx, arr.len()),
+                        span: index.span,
+                    });
+                }
+                match op {
+                    AssignOp::Assign => arr[idx] = val,
+                    AssignOp::AddAssign => arr[idx] += val,
+                }
+            } else {
+                return Err(SpannedError {
+                    message: "cannot index into non-array".to_string(),
+                    span: stmt.span,
+                });
+            }
+            Ok(Flow::Next)
         }
     }
-    Ok(())
 }
 
-fn eval_expr(expr: &Spanned<Expr>, env: &HashMap<String, i64>) -> Result<i64, SpannedError> {
+fn eval_expr(
+    expr: &Spanned<Expr>,
+    env: &mut Env,
+    fns: &mut Fns,
+    output: &mut Vec<String>,
+) -> Result<Value, SpannedError> {
     match &expr.node {
-        Expr::Int(n) => Ok(*n),
-        Expr::Var(name) => env.get(name).copied().ok_or_else(|| SpannedError {
-            message: format!("undefined variable: {name}"),
-            span: expr.span,
-        }),
+        Expr::Int(n) => Ok(Value::Int(*n)),
+        Expr::Var(name) => env
+            .get(name)
+            .cloned()
+            .ok_or_else(|| SpannedError {
+                message: format!("undefined variable: {name}"),
+                span: expr.span,
+            }),
         Expr::BinOp {
             left, op, right, ..
         } => {
-            let l = eval_expr(left, env)?;
-            let r = eval_expr(right, env)?;
-            Ok(match op {
+            let l = eval_expr(left, env, fns, output)?.as_int(left.span)?;
+            let r = eval_expr(right, env, fns, output)?.as_int(right.span)?;
+            Ok(Value::Int(match op {
                 BinOp::Add => l + r,
                 BinOp::Sub => l - r,
                 BinOp::Mul => l * r,
@@ -106,7 +243,101 @@ fn eval_expr(expr: &Spanned<Expr>, env: &HashMap<String, i64>) -> Result<i64, Sp
                 BinOp::Ge => (l >= r) as i64,
                 BinOp::And => ((l != 0) && (r != 0)) as i64,
                 BinOp::Or => ((l != 0) || (r != 0)) as i64,
-            })
+            }))
+        }
+        Expr::Call { name, args, .. } => {
+            // Evaluate arguments first
+            let mut arg_vals = Vec::new();
+            for arg in args {
+                arg_vals.push(eval_expr(arg, env, fns, output)?);
+            }
+
+            // Built-in: array(size, default)
+            if name == "array" {
+                if arg_vals.len() != 2 {
+                    return Err(SpannedError {
+                        message: "array() takes 2 arguments".to_string(),
+                        span: expr.span,
+                    });
+                }
+                let size = arg_vals[0].as_int(args[0].span)?;
+                let default = arg_vals[1].as_int(args[1].span)?;
+                return Ok(Value::Array(Rc::new(RefCell::new(
+                    vec![default; size as usize],
+                ))));
+            }
+
+            // Built-in: len(arr)
+            if name == "len" {
+                if arg_vals.len() != 1 {
+                    return Err(SpannedError {
+                        message: "len() takes 1 argument".to_string(),
+                        span: expr.span,
+                    });
+                }
+                return match &arg_vals[0] {
+                    Value::Array(arr) => Ok(Value::Int(arr.borrow().len() as i64)),
+                    _ => Err(SpannedError {
+                        message: "len() requires array".to_string(),
+                        span: args[0].span,
+                    }),
+                };
+            }
+
+            // User-defined function
+            let (params, body) = {
+                let fndef = fns.get(name.as_str()).ok_or_else(|| SpannedError {
+                    message: format!("undefined function: {name}"),
+                    span: expr.span,
+                })?;
+                (fndef.params.clone(), fndef.body.clone())
+            };
+            if arg_vals.len() != params.len() {
+                return Err(SpannedError {
+                    message: format!(
+                        "{name}() takes {} arguments, got {}",
+                        params.len(),
+                        arg_vals.len()
+                    ),
+                    span: expr.span,
+                });
+            }
+            let mut local_env = Env::new();
+            for (param, val) in params.iter().zip(arg_vals) {
+                local_env.insert(param.clone(), val);
+            }
+            match eval_stmts(&body, &mut local_env, fns, output)? {
+                Flow::Return(v) => Ok(v),
+                Flow::Break => Err(SpannedError {
+                    message: "break outside of loop".to_string(),
+                    span: expr.span,
+                }),
+                Flow::Next => Ok(Value::Int(0)),
+            }
+        }
+        Expr::Index { name, index, .. } => {
+            let idx = eval_expr(index, env, fns, output)?.as_int(index.span)?;
+            let arr = env.get(name).ok_or_else(|| SpannedError {
+                message: format!("undefined variable: {name}"),
+                span: expr.span,
+            })?;
+            match arr {
+                Value::Array(arr) => {
+                    let arr = arr.borrow();
+                    let idx = idx as usize;
+                    if idx >= arr.len() {
+                        return Err(SpannedError {
+                            message: format!("index {} out of bounds (len {})", idx, arr.len()),
+                            span: index.span,
+                        });
+                    }
+                    Ok(Value::Int(arr[idx]))
+                }
+                _ => Err(SpannedError {
+                    message: "cannot index into non-array".to_string(),
+                    span: expr.span,
+                }),
+            }
         }
     }
 }
@@ -161,6 +392,70 @@ mod tests {
     }
 
     #[test]
+    fn eval_while_loop() {
+        assert_eq!(
+            run("x = 10\nwhile x > 0\n  x = x - 1\nend\nprint x"),
+            vec!["0"]
+        );
+    }
+
+    #[test]
+    fn eval_break_in_while() {
+        assert_eq!(
+            run("x = 0\nwhile 1\n  if x == 5\n    break\n  end\n  x += 1\nend\nprint x"),
+            vec!["5"]
+        );
+    }
+
+    #[test]
+    fn eval_break_in_for() {
+        assert_eq!(
+            run("s = 0\nfor i from 0 to 100\n  if i == 3\n    break\n  end\n  s += i\nend\nprint s"),
+            vec!["3"]
+        );
+    }
+
+    #[test]
+    fn eval_function_call() {
+        assert_eq!(
+            run("fn add(a, b)\n  return a + b\nend\nprint add(3, 4)"),
+            vec!["7"]
+        );
+    }
+
+    #[test]
+    fn eval_function_with_while() {
+        let src = "fn gcd(a, b)\n  while b != 0\n    temp = a % b\n    a = b\n    b = temp\n  end\n  return a\nend\nprint gcd(12, 8)";
+        assert_eq!(run(src), vec!["4"]);
+    }
+
+    #[test]
+    fn eval_recursive_function() {
+        // factorial via recursion
+        let src = "fn fact(n)\n  if n <= 1\n    return 1\n  end\n  return n * fact(n - 1)\nend\nprint fact(5)";
+        assert_eq!(run(src), vec!["120"]);
+    }
+
+    #[test]
+    fn eval_array_basic() {
+        assert_eq!(
+            run("a = array(3, 0)\na[0] = 10\na[1] = 20\na[2] = 30\nprint a[0] + a[1] + a[2]"),
+            vec!["60"]
+        );
+    }
+
+    #[test]
+    fn eval_array_len() {
+        assert_eq!(run("a = array(5, 0)\nprint len(a)"), vec!["5"]);
+    }
+
+    #[test]
+    fn eval_array_passed_to_function() {
+        let src = "fn fill(arr, n)\n  for i from 0 to n\n    arr[i] = i * i\n  end\n  return 0\nend\na = array(5, 0)\nfill(a, 5)\nprint a[3]";
+        assert_eq!(run(src), vec!["9"]);
+    }
+
+    #[test]
     fn eval_if_true() {
         assert_eq!(run("x = 1\nif x == 1\n  print 42\nend"), vec!["42"]);
     }
@@ -203,5 +498,11 @@ mod tests {
     #[test]
     fn eval_modulo_by_zero() {
         assert_eq!(run_err("print 1 % 0"), "division by zero");
+    }
+
+    #[test]
+    fn eval_index_out_of_bounds() {
+        let msg = run_err("a = array(3, 0)\nprint a[5]");
+        assert!(msg.contains("out of bounds"));
     }
 }

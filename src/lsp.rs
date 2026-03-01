@@ -11,12 +11,16 @@ const KEYWORD: u32 = 0;
 const VARIABLE: u32 = 1;
 const NUMBER: u32 = 2;
 const OPERATOR: u32 = 3;
+const FUNCTION: u32 = 4;
+const PARAMETER: u32 = 5;
 
 const TOKEN_TYPES: &[SemanticTokenType] = &[
     SemanticTokenType::KEYWORD,
     SemanticTokenType::VARIABLE,
     SemanticTokenType::NUMBER,
     SemanticTokenType::OPERATOR,
+    SemanticTokenType::FUNCTION,
+    SemanticTokenType::PARAMETER,
 ];
 
 struct Backend {
@@ -144,7 +148,7 @@ impl LanguageServer for Backend {
         let (text, stmts) = entry.value();
 
         let offset = position_to_offset(text, pos);
-        let mut defs: Vec<(String, Span)> = Vec::new();
+        let mut defs = Defs::default();
         if let Some(def_span) = find_def_in_stmts(stmts, offset, &mut defs) {
             let start = offset_to_position(text, def_span.start);
             let end = offset_to_position(text, def_span.end);
@@ -167,6 +171,10 @@ impl LanguageServer for Backend {
 /// (byte_offset, length, token_type)
 type RawToken = (usize, usize, u32);
 
+fn span_len(s: &Span) -> usize {
+    s.end - s.start
+}
+
 fn collect_stmt_tokens(stmt: &Spanned<Stmt>, tokens: &mut Vec<RawToken>) {
     match &stmt.node {
         Stmt::Assign {
@@ -177,7 +185,7 @@ fn collect_stmt_tokens(stmt: &Spanned<Stmt>, tokens: &mut Vec<RawToken>) {
             ..
         } => {
             tokens.push((name_span.start, name.len(), VARIABLE));
-            tokens.push((op_span.start, op_span.end - op_span.start, OPERATOR));
+            tokens.push((op_span.start, span_len(op_span), OPERATOR));
             collect_expr_tokens(value, tokens);
         }
         Stmt::For {
@@ -191,16 +199,29 @@ fn collect_stmt_tokens(stmt: &Spanned<Stmt>, tokens: &mut Vec<RawToken>) {
             body,
             end_span,
         } => {
-            tokens.push((for_span.start, for_span.end - for_span.start, KEYWORD));
+            tokens.push((for_span.start, span_len(for_span), KEYWORD));
             tokens.push((var_span.start, var.len(), VARIABLE));
-            tokens.push((from_span.start, from_span.end - from_span.start, KEYWORD));
+            tokens.push((from_span.start, span_len(from_span), KEYWORD));
             collect_expr_tokens(from, tokens);
-            tokens.push((to_span.start, to_span.end - to_span.start, KEYWORD));
+            tokens.push((to_span.start, span_len(to_span), KEYWORD));
             collect_expr_tokens(to, tokens);
             for s in body {
                 collect_stmt_tokens(s, tokens);
             }
-            tokens.push((end_span.start, end_span.end - end_span.start, KEYWORD));
+            tokens.push((end_span.start, span_len(end_span), KEYWORD));
+        }
+        Stmt::While {
+            while_span,
+            cond,
+            body,
+            end_span,
+        } => {
+            tokens.push((while_span.start, span_len(while_span), KEYWORD));
+            collect_expr_tokens(cond, tokens);
+            for s in body {
+                collect_stmt_tokens(s, tokens);
+            }
+            tokens.push((end_span.start, span_len(end_span), KEYWORD));
         }
         Stmt::If {
             if_span,
@@ -208,21 +229,61 @@ fn collect_stmt_tokens(stmt: &Spanned<Stmt>, tokens: &mut Vec<RawToken>) {
             body,
             end_span,
         } => {
-            tokens.push((if_span.start, if_span.end - if_span.start, KEYWORD));
+            tokens.push((if_span.start, span_len(if_span), KEYWORD));
             collect_expr_tokens(cond, tokens);
             for s in body {
                 collect_stmt_tokens(s, tokens);
             }
-            tokens.push((end_span.start, end_span.end - end_span.start, KEYWORD));
+            tokens.push((end_span.start, span_len(end_span), KEYWORD));
         }
         Stmt::Print {
             print_span, value, ..
         } => {
-            tokens.push((
-                print_span.start,
-                print_span.end - print_span.start,
-                KEYWORD,
-            ));
+            tokens.push((print_span.start, span_len(print_span), KEYWORD));
+            collect_expr_tokens(value, tokens);
+        }
+        Stmt::FnDef {
+            fn_span,
+            name,
+            name_span,
+            params,
+            body,
+            end_span,
+        } => {
+            tokens.push((fn_span.start, span_len(fn_span), KEYWORD));
+            tokens.push((name_span.start, name.len(), FUNCTION));
+            for (pname, pspan) in params {
+                tokens.push((pspan.start, pname.len(), PARAMETER));
+            }
+            for s in body {
+                collect_stmt_tokens(s, tokens);
+            }
+            tokens.push((end_span.start, span_len(end_span), KEYWORD));
+        }
+        Stmt::Return {
+            return_span,
+            value,
+        } => {
+            tokens.push((return_span.start, span_len(return_span), KEYWORD));
+            collect_expr_tokens(value, tokens);
+        }
+        Stmt::Break { break_span } => {
+            tokens.push((break_span.start, span_len(break_span), KEYWORD));
+        }
+        Stmt::ExprStmt { value } => {
+            collect_expr_tokens(value, tokens);
+        }
+        Stmt::IndexAssign {
+            name,
+            name_span,
+            index,
+            op_span,
+            value,
+            ..
+        } => {
+            tokens.push((name_span.start, name.len(), VARIABLE));
+            collect_expr_tokens(index, tokens);
+            tokens.push((op_span.start, span_len(op_span), OPERATOR));
             collect_expr_tokens(value, tokens);
         }
     }
@@ -231,10 +292,10 @@ fn collect_stmt_tokens(stmt: &Spanned<Stmt>, tokens: &mut Vec<RawToken>) {
 fn collect_expr_tokens(expr: &Spanned<Expr>, tokens: &mut Vec<RawToken>) {
     match &expr.node {
         Expr::Int(_) => {
-            tokens.push((expr.span.start, expr.span.end - expr.span.start, NUMBER));
+            tokens.push((expr.span.start, span_len(&expr.span), NUMBER));
         }
         Expr::Var(_) => {
-            tokens.push((expr.span.start, expr.span.end - expr.span.start, VARIABLE));
+            tokens.push((expr.span.start, span_len(&expr.span), VARIABLE));
         }
         Expr::BinOp {
             left,
@@ -247,18 +308,42 @@ fn collect_expr_tokens(expr: &Spanned<Expr>, tokens: &mut Vec<RawToken>) {
                 BinOp::And | BinOp::Or => KEYWORD,
                 _ => OPERATOR,
             };
-            tokens.push((op_span.start, op_span.end - op_span.start, token_type));
+            tokens.push((op_span.start, span_len(op_span), token_type));
             collect_expr_tokens(right, tokens);
+        }
+        Expr::Call {
+            name,
+            name_span,
+            args,
+        } => {
+            tokens.push((name_span.start, name.len(), FUNCTION));
+            for arg in args {
+                collect_expr_tokens(arg, tokens);
+            }
+        }
+        Expr::Index {
+            name,
+            name_span,
+            index,
+        } => {
+            tokens.push((name_span.start, name.len(), VARIABLE));
+            collect_expr_tokens(index, tokens);
         }
     }
 }
 
 // -- Go-to-definition --
 
+#[derive(Default)]
+pub struct Defs {
+    vars: Vec<(String, Span)>,
+    fns: Vec<(String, Span)>,
+}
+
 pub fn find_def_in_stmts(
     stmts: &[Spanned<Stmt>],
     offset: usize,
-    defs: &mut Vec<(String, Span)>,
+    defs: &mut Defs,
 ) -> Option<Span> {
     for stmt in stmts {
         if let Some(span) = find_def_in_stmt(stmt, offset, defs) {
@@ -271,7 +356,7 @@ pub fn find_def_in_stmts(
 fn find_def_in_stmt(
     stmt: &Spanned<Stmt>,
     offset: usize,
-    defs: &mut Vec<(String, Span)>,
+    defs: &mut Defs,
 ) -> Option<Span> {
     if offset < stmt.span.start || offset >= stmt.span.end {
         record_defs(stmt, defs);
@@ -285,15 +370,13 @@ fn find_def_in_stmt(
             value,
             ..
         } => {
-            // Cursor on LHS name → go to self
             if offset >= name_span.start && offset < name_span.end {
                 return Some(*name_span);
             }
-            // Check in value expression
             if let Some(span) = find_def_in_expr(value, offset, defs) {
                 return Some(span);
             }
-            defs.push((name.clone(), *name_span));
+            defs.vars.push((name.clone(), *name_span));
             None
         }
         Stmt::For {
@@ -313,7 +396,13 @@ fn find_def_in_stmt(
             if let Some(span) = find_def_in_expr(to, offset, defs) {
                 return Some(span);
             }
-            defs.push((var.clone(), *var_span));
+            defs.vars.push((var.clone(), *var_span));
+            find_def_in_stmts(body, offset, defs)
+        }
+        Stmt::While { cond, body, .. } => {
+            if let Some(span) = find_def_in_expr(cond, offset, defs) {
+                return Some(span);
+            }
             find_def_in_stmts(body, offset, defs)
         }
         Stmt::If { cond, body, .. } => {
@@ -323,13 +412,67 @@ fn find_def_in_stmt(
             find_def_in_stmts(body, offset, defs)
         }
         Stmt::Print { value, .. } => find_def_in_expr(value, offset, defs),
+        Stmt::FnDef {
+            name,
+            name_span,
+            params,
+            body,
+            ..
+        } => {
+            if offset >= name_span.start && offset < name_span.end {
+                return Some(*name_span);
+            }
+            for (_, pspan) in params {
+                if offset >= pspan.start && offset < pspan.end {
+                    return Some(*pspan);
+                }
+            }
+            // Inside function body: add params as local var defs
+            let saved_len = defs.vars.len();
+            for (pname, pspan) in params {
+                defs.vars.push((pname.clone(), *pspan));
+            }
+            let result = find_def_in_stmts(body, offset, defs);
+            defs.vars.truncate(saved_len);
+            if result.is_some() {
+                // Still register the function name
+                defs.fns.push((name.clone(), *name_span));
+                return result;
+            }
+            defs.fns.push((name.clone(), *name_span));
+            None
+        }
+        Stmt::Return { value, .. } => find_def_in_expr(value, offset, defs),
+        Stmt::Break { .. } => None,
+        Stmt::ExprStmt { value } => find_def_in_expr(value, offset, defs),
+        Stmt::IndexAssign {
+            name,
+            name_span,
+            index,
+            value,
+            ..
+        } => {
+            if offset >= name_span.start && offset < name_span.end {
+                // Resolve array name to its definition
+                for (vname, vspan) in defs.vars.iter().rev() {
+                    if vname == name {
+                        return Some(*vspan);
+                    }
+                }
+                return None;
+            }
+            if let Some(span) = find_def_in_expr(index, offset, defs) {
+                return Some(span);
+            }
+            find_def_in_expr(value, offset, defs)
+        }
     }
 }
 
 fn find_def_in_expr(
     expr: &Spanned<Expr>,
     offset: usize,
-    defs: &[(String, Span)],
+    defs: &Defs,
 ) -> Option<Span> {
     if offset < expr.span.start || offset >= expr.span.end {
         return None;
@@ -337,7 +480,7 @@ fn find_def_in_expr(
 
     match &expr.node {
         Expr::Var(name) => {
-            for (def_name, def_span) in defs.iter().rev() {
+            for (def_name, def_span) in defs.vars.iter().rev() {
                 if def_name == name {
                     return Some(*def_span);
                 }
@@ -347,15 +490,50 @@ fn find_def_in_expr(
         Expr::Int(_) => None,
         Expr::BinOp { left, right, .. } => find_def_in_expr(left, offset, defs)
             .or_else(|| find_def_in_expr(right, offset, defs)),
+        Expr::Call {
+            name,
+            name_span,
+            args,
+        } => {
+            if offset >= name_span.start && offset < name_span.end {
+                for (fn_name, fn_span) in defs.fns.iter().rev() {
+                    if fn_name == name {
+                        return Some(*fn_span);
+                    }
+                }
+                return None;
+            }
+            for arg in args {
+                if let Some(span) = find_def_in_expr(arg, offset, defs) {
+                    return Some(span);
+                }
+            }
+            None
+        }
+        Expr::Index {
+            name,
+            name_span,
+            index,
+        } => {
+            if offset >= name_span.start && offset < name_span.end {
+                for (var_name, var_span) in defs.vars.iter().rev() {
+                    if var_name == name {
+                        return Some(*var_span);
+                    }
+                }
+                return None;
+            }
+            find_def_in_expr(index, offset, defs)
+        }
     }
 }
 
-fn record_defs(stmt: &Spanned<Stmt>, defs: &mut Vec<(String, Span)>) {
+fn record_defs(stmt: &Spanned<Stmt>, defs: &mut Defs) {
     match &stmt.node {
         Stmt::Assign {
             name, name_span, ..
         } => {
-            defs.push((name.clone(), *name_span));
+            defs.vars.push((name.clone(), *name_span));
         }
         Stmt::For {
             var,
@@ -363,17 +541,26 @@ fn record_defs(stmt: &Spanned<Stmt>, defs: &mut Vec<(String, Span)>) {
             body,
             ..
         } => {
-            defs.push((var.clone(), *var_span));
+            defs.vars.push((var.clone(), *var_span));
             for s in body {
                 record_defs(s, defs);
             }
         }
-        Stmt::If { body, .. } => {
+        Stmt::While { body, .. } | Stmt::If { body, .. } => {
             for s in body {
                 record_defs(s, defs);
             }
         }
-        Stmt::Print { .. } => {}
+        Stmt::FnDef {
+            name, name_span, ..
+        } => {
+            defs.fns.push((name.clone(), *name_span));
+        }
+        Stmt::Print { .. }
+        | Stmt::Return { .. }
+        | Stmt::Break { .. }
+        | Stmt::IndexAssign { .. }
+        | Stmt::ExprStmt { .. } => {}
     }
 }
 
@@ -477,7 +664,6 @@ mod tests {
 
     #[test]
     fn test_collect_tokens_assign() {
-        // "x = 5"
         let stmts = parser::parse("x = 5").unwrap();
         let tokens = collect_tokens_pub(&stmts);
         assert_eq!(tokens.len(), 3);
@@ -500,7 +686,6 @@ mod tests {
         let src = "for i from 0 to 10\n  x = i\nend";
         let stmts = parser::parse(src).unwrap();
         let tokens = collect_tokens_pub(&stmts);
-        // for(KW) i(VAR) from(KW) 0(NUM) to(KW) 10(NUM) x(VAR) =(OP) i(VAR) end(KW)
         assert_eq!(tokens.len(), 10);
         assert_eq!(tokens[0].2, KEYWORD); // for
         assert_eq!(tokens[1].2, VARIABLE); // i
@@ -515,52 +700,69 @@ mod tests {
     }
 
     #[test]
+    fn test_collect_tokens_while() {
+        let src = "while x > 0\n  x = x - 1\nend";
+        let stmts = parser::parse(src).unwrap();
+        let tokens = collect_tokens_pub(&stmts);
+        assert_eq!(tokens[0].2, KEYWORD); // while
+        assert_eq!(tokens[tokens.len() - 1].2, KEYWORD); // end
+    }
+
+    #[test]
+    fn test_collect_tokens_fn_def() {
+        let src = "fn add(a, b)\n  return a + b\nend";
+        let stmts = parser::parse(src).unwrap();
+        let tokens = collect_tokens_pub(&stmts);
+        // fn(KW) add(FN) a(PARAM) b(PARAM) return(KW) a(VAR) +(OP) b(VAR) end(KW)
+        assert_eq!(tokens[0].2, KEYWORD); // fn
+        assert_eq!(tokens[1].2, FUNCTION); // add
+        assert_eq!(tokens[2].2, PARAMETER); // a
+        assert_eq!(tokens[3].2, PARAMETER); // b
+        assert_eq!(tokens[4].2, KEYWORD); // return
+    }
+
+    #[test]
+    fn test_collect_tokens_call() {
+        let stmts = parser::parse("x = foo(1, 2)").unwrap();
+        let tokens = collect_tokens_pub(&stmts);
+        // x(VAR) =(OP) foo(FN) 1(NUM) 2(NUM)
+        assert_eq!(tokens[2].2, FUNCTION); // foo
+        assert_eq!(tokens[3].2, NUMBER); // 1
+        assert_eq!(tokens[4].2, NUMBER); // 2
+    }
+
+    #[test]
     fn test_collect_tokens_and_or_are_keywords() {
         let stmts = parser::parse("x = a and b or c").unwrap();
         let tokens = collect_tokens_pub(&stmts);
-        // x(VAR) =(OP) a(VAR) or(KW) b(VAR) and(KW) c(VAR)
-        // After sort: x, =, a, and, b, or, c
-        // Wait, precedence: a and b → binop, then or c
-        // Tokens sorted by offset: x(0) =(2) a(4) and(6) b(10) or(12) c(15)
-        // Actually let's just check the and/or are KEYWORD
         let keywords: Vec<_> = tokens.iter().filter(|t| t.2 == KEYWORD).collect();
         assert_eq!(keywords.len(), 2); // and, or
     }
 
     #[test]
     fn test_find_def_simple() {
-        // "x = 5\nprint x"
-        // cursor on "x" in print (offset 12)
         let src = "x = 5\nprint x";
         let stmts = parser::parse(src).unwrap();
-        let mut defs = Vec::new();
+        let mut defs = Defs::default();
         let result = find_def_in_stmts(&stmts, 12, &mut defs);
-        // x is defined at offset 0..1
         assert_eq!(result, Some(Span { start: 0, end: 1 }));
     }
 
     #[test]
     fn test_find_def_for_var() {
-        // cursor on "i" in body of for loop
         let src = "for i from 0 to 10\n  print i\nend";
         let stmts = parser::parse(src).unwrap();
-        let mut defs = Vec::new();
-        // "print i" — the "i" is at offset 27
+        let mut defs = Defs::default();
         let result = find_def_in_stmts(&stmts, 27, &mut defs);
-        // i is defined at offset 4..5 (the for var)
         assert_eq!(result, Some(Span { start: 4, end: 5 }));
     }
 
     #[test]
     fn test_find_def_reassigned() {
-        // x = 1\nx = 2\nprint x
-        // cursor on x in print should go to second assignment
         let src = "x = 1\nx = 2\nprint x";
         let stmts = parser::parse(src).unwrap();
-        let mut defs = Vec::new();
-        // "print x" — x is at offset 18
+        let mut defs = Defs::default();
         let result = find_def_in_stmts(&stmts, 18, &mut defs);
-        // Second x = 2, x at offset 6..7
         assert_eq!(result, Some(Span { start: 6, end: 7 }));
     }
 
@@ -568,8 +770,7 @@ mod tests {
     fn test_find_def_on_definition_site() {
         let src = "x = 5";
         let stmts = parser::parse(src).unwrap();
-        let mut defs = Vec::new();
-        // cursor on "x" at offset 0
+        let mut defs = Defs::default();
         let result = find_def_in_stmts(&stmts, 0, &mut defs);
         assert_eq!(result, Some(Span { start: 0, end: 1 }));
     }
@@ -578,24 +779,34 @@ mod tests {
     fn test_find_def_undefined() {
         let src = "print x";
         let stmts = parser::parse(src).unwrap();
-        let mut defs = Vec::new();
-        // cursor on "x" at offset 6
+        let mut defs = Defs::default();
         let result = find_def_in_stmts(&stmts, 6, &mut defs);
         assert_eq!(result, None);
     }
 
     #[test]
-    fn test_find_def_in_euler_001() {
-        let src = "total = 0\n\nfor i from 0 to 1000\n  if i % 3 == 0 or i % 5 == 0\n    total += i\n  end\nend\n\nprint total";
+    fn test_find_def_function_call() {
+        let src = "fn foo()\n  return 0\nend\nx = foo()";
         let stmts = parser::parse(src).unwrap();
-        let mut defs = Vec::new();
-        // "total" in "print total" starts at offset 89
-        // Let's find offset of last "total"
-        let last_total = src.rfind("total").unwrap();
-        let result = find_def_in_stmts(&stmts, last_total, &mut defs);
-        // Should resolve to the "total" in "total += i" (offset 65)
-        // or the first "total = 0" (offset 0). The += updates defs too.
+        let mut defs = Defs::default();
+        // "foo()" in "x = foo()" — "foo" starts at offset 26
+        let foo_offset = src.rfind("foo").unwrap();
+        let result = find_def_in_stmts(&stmts, foo_offset, &mut defs);
+        // Should resolve to the fn definition's name_span
         assert!(result.is_some());
+        let def = result.unwrap();
+        assert_eq!(&src[def.start..def.end], "foo");
+    }
+
+    #[test]
+    fn test_find_def_parameter() {
+        let src = "fn add(a, b)\n  return a + b\nend";
+        let stmts = parser::parse(src).unwrap();
+        let mut defs = Defs::default();
+        // "a" in "return a + b" at offset 22
+        let result = find_def_in_stmts(&stmts, 22, &mut defs);
+        // Should resolve to param "a" at offset 7
+        assert_eq!(result, Some(Span { start: 7, end: 8 }));
     }
 
     #[test]

@@ -1,0 +1,31 @@
+# Project Euler Problem 7
+# What is the 10001st prime number?
+#
+# We test each candidate for primality via trial division up to sqrt(n),
+# counting primes until we reach the 10001st.
+
+fn is_prime(n)
+  if n < 2
+    return 0
+  end
+  d = 2
+  while d * d <= n
+    if n % d == 0
+      return 0
+    end
+    d += 1
+  end
+  return 1
+end
+
+count = 0
+num = 1
+
+while count < 10001
+  num += 1
+  if is_prime(num)
+    count += 1
+  end
+end
+
+print num

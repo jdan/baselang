@@ -1,0 +1,28 @@
+# Project Euler Problem 4
+# Find the largest palindrome made from the product of two 3-digit numbers.
+#
+# A palindromic number reads the same forwards and backwards.
+# We check all products of 3-digit numbers (100..999) and track the largest.
+
+fn is_palindrome(n)
+  original = n
+  reversed = 0
+  while n > 0
+    reversed = reversed * 10 + n % 10
+    n = n / 10
+  end
+  return reversed == original
+end
+
+best = 0
+
+for i from 100 to 1000
+  for j from i to 1000
+    prod = i * j
+    if is_palindrome(prod) and prod > best
+      best = prod
+    end
+  end
+end
+
+print best

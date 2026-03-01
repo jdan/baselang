@@ -1,0 +1,22 @@
+# Project Euler Problem 5
+# What is the smallest positive number evenly divisible by all numbers 1 to 20?
+#
+# Compute the LCM of 1..20 iteratively using: LCM(a,b) = a / GCD(a,b) * b
+# GCD is computed via the Euclidean algorithm.
+
+fn gcd(a, b)
+  while b != 0
+    temp = a % b
+    a = b
+    b = temp
+  end
+  return a
+end
+
+result = 1
+
+for i from 1 to 21
+  result = result / gcd(result, i) * i
+end
+
+print result

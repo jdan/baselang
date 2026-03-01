@@ -1,0 +1,92 @@
+# Project Euler Problem 8
+# Find the thirteen adjacent digits in the 1000-digit number that have
+# the greatest product.
+#
+# We store all 1000 digits in an array using a helper that decomposes
+# integers into individual digits, then slide a window of 13 across.
+
+fn set_digits(arr, offset, n, count)
+  i = count - 1
+  while i >= 0
+    arr[offset + i] = n % 10
+    n = n / 10
+    i = i - 1
+  end
+  return 0
+end
+
+d = array(1000, 0)
+
+set_digits(d, 0, 73167176531330624, 17)
+set_digits(d, 17, 91922511967442657, 17)
+set_digits(d, 34, 47423553491949349, 17)
+set_digits(d, 51, 69835203127745063, 17)
+set_digits(d, 68, 26239578318016984, 17)
+set_digits(d, 85, 80186947885184385, 17)
+set_digits(d, 102, 86156078911294949, 17)
+set_digits(d, 119, 54595017379583319, 17)
+set_digits(d, 136, 52853208805511125, 17)
+set_digits(d, 153, 40698747158523863, 17)
+set_digits(d, 170, 5071569329096329, 17)
+set_digits(d, 187, 52274430435576689, 17)
+set_digits(d, 204, 66489504452445231, 17)
+set_digits(d, 221, 61731856403098711, 17)
+set_digits(d, 238, 12172238311362229, 17)
+set_digits(d, 255, 89342338030813533, 17)
+set_digits(d, 272, 62766142828064444, 17)
+set_digits(d, 289, 86645238749303589, 17)
+set_digits(d, 306, 7296290491560440, 17)
+set_digits(d, 323, 77239071381051585, 17)
+set_digits(d, 340, 93079608667017242, 17)
+set_digits(d, 357, 71218839987979087, 17)
+set_digits(d, 374, 92274921901699720, 17)
+set_digits(d, 391, 88809377665727333, 17)
+set_digits(d, 408, 105336788122023, 17)
+set_digits(d, 425, 54218097512545405, 17)
+set_digits(d, 442, 94752243525849077, 17)
+set_digits(d, 459, 11670556013604839, 17)
+set_digits(d, 476, 58644670632441572, 17)
+set_digits(d, 493, 21553975369781797, 17)
+set_digits(d, 510, 78461740649551492, 17)
+set_digits(d, 527, 90862569321978468, 17)
+set_digits(d, 544, 62248283972241375, 17)
+set_digits(d, 561, 65705605749026140, 17)
+set_digits(d, 578, 79729686524145351, 17)
+set_digits(d, 595, 474821663704844, 17)
+set_digits(d, 612, 3199890008895243, 17)
+set_digits(d, 629, 45065854122758866, 17)
+set_digits(d, 646, 68811642717147992, 17)
+set_digits(d, 663, 44429282308634656, 17)
+set_digits(d, 680, 74813919123162824, 17)
+set_digits(d, 697, 58617866458359124, 17)
+set_digits(d, 714, 56652947654568284, 17)
+set_digits(d, 731, 89128831426076900, 17)
+set_digits(d, 748, 42242190226710556, 17)
+set_digits(d, 765, 26321111109370544, 17)
+set_digits(d, 782, 21750694165896040, 17)
+set_digits(d, 799, 80719840385096245, 17)
+set_digits(d, 816, 54443629812309878, 17)
+set_digits(d, 833, 79927244284909188, 17)
+set_digits(d, 850, 84580156166097919, 17)
+set_digits(d, 867, 13387549920052406, 17)
+set_digits(d, 884, 36899125607176060, 17)
+set_digits(d, 901, 58861164671094050, 17)
+set_digits(d, 918, 77541002256983155, 17)
+set_digits(d, 935, 20005593572972571, 17)
+set_digits(d, 952, 63626956188267042, 17)
+set_digits(d, 969, 82524836008232575, 17)
+set_digits(d, 986, 30420752963450, 14)
+
+best = 0
+
+for i from 0 to 988
+  prod = 1
+  for j from 0 to 13
+    prod = prod * d[i + j]
+  end
+  if prod > best
+    best = prod
+  end
+end
+
+print best

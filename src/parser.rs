@@ -87,9 +87,13 @@ impl Parser {
     fn parse_stmt(&mut self) -> Result<Spanned<Stmt>, SpannedError> {
         match self.peek_kind() {
             TokenKind::For => self.parse_for(),
+            TokenKind::While => self.parse_while(),
             TokenKind::If => self.parse_if(),
             TokenKind::Print => self.parse_print(),
-            TokenKind::Ident(_) => self.parse_assign(),
+            TokenKind::Fn => self.parse_fn_def(),
+            TokenKind::Return => self.parse_return(),
+            TokenKind::Break => self.parse_break(),
+            TokenKind::Ident(_) => self.parse_ident_stmt(),
             _ => Err(SpannedError {
                 message: "expected statement".to_string(),
                 span: self.peek_span(),
@@ -137,6 +141,26 @@ impl Parser {
         })
     }
 
+    fn parse_while(&mut self) -> Result<Spanned<Stmt>, SpannedError> {
+        let while_span = self.advance_span();
+        let cond = self.parse_expr()?;
+        self.expect_newline()?;
+        let body = self.parse_stmt_list()?;
+        let end_span = self.expect(&TokenKind::End, "expected 'end'")?;
+        Ok(Spanned {
+            span: Span {
+                start: while_span.start,
+                end: end_span.end,
+            },
+            node: Stmt::While {
+                while_span,
+                cond,
+                body,
+                end_span,
+            },
+        })
+    }
+
     fn parse_if(&mut self) -> Result<Spanned<Stmt>, SpannedError> {
         let if_span = self.advance_span();
         let cond = self.parse_expr()?;
@@ -169,8 +193,106 @@ impl Parser {
         })
     }
 
-    fn parse_assign(&mut self) -> Result<Spanned<Stmt>, SpannedError> {
+    fn parse_fn_def(&mut self) -> Result<Spanned<Stmt>, SpannedError> {
+        let fn_span = self.advance_span();
         let (name, name_span) = self.expect_ident()?;
+        self.expect(&TokenKind::LParen, "expected '('")?;
+        let mut params = Vec::new();
+        if !matches!(self.peek_kind(), TokenKind::RParen) {
+            let (p, ps) = self.expect_ident()?;
+            params.push((p, ps));
+            while matches!(self.peek_kind(), TokenKind::Comma) {
+                self.advance_span();
+                let (p, ps) = self.expect_ident()?;
+                params.push((p, ps));
+            }
+        }
+        self.expect(&TokenKind::RParen, "expected ')'")?;
+        self.expect_newline()?;
+        let body = self.parse_stmt_list()?;
+        let end_span = self.expect(&TokenKind::End, "expected 'end'")?;
+        Ok(Spanned {
+            span: Span {
+                start: fn_span.start,
+                end: end_span.end,
+            },
+            node: Stmt::FnDef {
+                fn_span,
+                name,
+                name_span,
+                params,
+                body,
+                end_span,
+            },
+        })
+    }
+
+    fn parse_return(&mut self) -> Result<Spanned<Stmt>, SpannedError> {
+        let return_span = self.advance_span();
+        let value = self.parse_expr()?;
+        Ok(Spanned {
+            span: Span {
+                start: return_span.start,
+                end: value.span.end,
+            },
+            node: Stmt::Return {
+                return_span,
+                value,
+            },
+        })
+    }
+
+    fn parse_break(&mut self) -> Result<Spanned<Stmt>, SpannedError> {
+        let break_span = self.advance_span();
+        Ok(Spanned {
+            span: break_span,
+            node: Stmt::Break { break_span },
+        })
+    }
+
+    fn parse_ident_stmt(&mut self) -> Result<Spanned<Stmt>, SpannedError> {
+        let (name, name_span) = self.expect_ident()?;
+        if matches!(self.peek_kind(), TokenKind::LBracket) {
+            self.parse_index_assign(name, name_span)
+        } else if matches!(self.peek_kind(), TokenKind::LParen) {
+            // Function call as statement
+            self.advance_span(); // consume (
+            let mut args = Vec::new();
+            if !matches!(self.peek_kind(), TokenKind::RParen) {
+                args.push(self.parse_expr()?);
+                while matches!(self.peek_kind(), TokenKind::Comma) {
+                    self.advance_span();
+                    args.push(self.parse_expr()?);
+                }
+            }
+            let rp = self.expect(&TokenKind::RParen, "expected ')'")?;
+            let span = Span {
+                start: name_span.start,
+                end: rp.end,
+            };
+            Ok(Spanned {
+                span,
+                node: Stmt::ExprStmt {
+                    value: Spanned {
+                        span,
+                        node: Expr::Call {
+                            name,
+                            name_span,
+                            args,
+                        },
+                    },
+                },
+            })
+        } else {
+            self.parse_assign_rest(name, name_span)
+        }
+    }
+
+    fn parse_assign_rest(
+        &mut self,
+        name: String,
+        name_span: Span,
+    ) -> Result<Spanned<Stmt>, SpannedError> {
         let (op, op_span) = if matches!(self.peek_kind(), TokenKind::Eq) {
             (AssignOp::Assign, self.advance_span())
         } else if matches!(self.peek_kind(), TokenKind::PlusEq) {
@@ -190,6 +312,41 @@ impl Parser {
             node: Stmt::Assign {
                 name,
                 name_span,
+                op,
+                op_span,
+                value,
+            },
+        })
+    }
+
+    fn parse_index_assign(
+        &mut self,
+        name: String,
+        name_span: Span,
+    ) -> Result<Spanned<Stmt>, SpannedError> {
+        self.advance_span(); // consume [
+        let index = self.parse_expr()?;
+        self.expect(&TokenKind::RBracket, "expected ']'")?;
+        let (op, op_span) = if matches!(self.peek_kind(), TokenKind::Eq) {
+            (AssignOp::Assign, self.advance_span())
+        } else if matches!(self.peek_kind(), TokenKind::PlusEq) {
+            (AssignOp::AddAssign, self.advance_span())
+        } else {
+            return Err(SpannedError {
+                message: "expected '=' or '+='".to_string(),
+                span: self.peek_span(),
+            });
+        };
+        let value = self.parse_expr()?;
+        Ok(Spanned {
+            span: Span {
+                start: name_span.start,
+                end: value.span.end,
+            },
+            node: Stmt::IndexAssign {
+                name,
+                name_span,
+                index,
                 op,
                 op_span,
                 value,
@@ -356,11 +513,55 @@ impl Parser {
             }
             TokenKind::Ident(name) => {
                 let name = name.clone();
-                let span = self.advance_span();
-                Ok(Spanned {
-                    node: Expr::Var(name),
-                    span,
-                })
+                let name_span = self.advance_span();
+                // Function call: name(args...)
+                if matches!(self.peek_kind(), TokenKind::LParen) {
+                    self.advance_span(); // consume (
+                    let mut args = Vec::new();
+                    if !matches!(self.peek_kind(), TokenKind::RParen) {
+                        args.push(self.parse_expr()?);
+                        while matches!(self.peek_kind(), TokenKind::Comma) {
+                            self.advance_span();
+                            args.push(self.parse_expr()?);
+                        }
+                    }
+                    let rp = self.expect(&TokenKind::RParen, "expected ')'")?;
+                    Ok(Spanned {
+                        span: Span {
+                            start: name_span.start,
+                            end: rp.end,
+                        },
+                        node: Expr::Call {
+                            name,
+                            name_span,
+                            args,
+                        },
+                    })
+                }
+                // Array index: name[expr]
+                else if matches!(self.peek_kind(), TokenKind::LBracket) {
+                    self.advance_span(); // consume [
+                    let index = self.parse_expr()?;
+                    let rb = self.expect(&TokenKind::RBracket, "expected ']'")?;
+                    Ok(Spanned {
+                        span: Span {
+                            start: name_span.start,
+                            end: rb.end,
+                        },
+                        node: Expr::Index {
+                            name,
+                            name_span,
+                            index: Box::new(index),
+                        },
+                    })
+                }
+                // Simple variable
+                else {
+                    Ok(Spanned {
+                        node: Expr::Var(name),
+                        span: name_span,
+                    })
+                }
             }
             TokenKind::LParen => {
                 let lp = self.advance_span();
@@ -433,7 +634,6 @@ mod tests {
 
     #[test]
     fn parse_precedence_mul_over_add() {
-        // 1 + 2 * 3 should be 1 + (2 * 3)
         let stmts = parse("x = 1 + 2 * 3").unwrap();
         match &stmts[0].node {
             Stmt::Assign { value, .. } => match &value.node {
@@ -444,12 +644,7 @@ mod tests {
                     ..
                 } => {
                     assert_eq!(left.node, Expr::Int(1));
-                    match &right.node {
-                        Expr::BinOp {
-                            op: BinOp::Mul, ..
-                        } => {}
-                        _ => panic!("expected Mul on right"),
-                    }
+                    assert!(matches!(right.node, Expr::BinOp { op: BinOp::Mul, .. }));
                 }
                 _ => panic!("expected Add"),
             },
@@ -459,7 +654,6 @@ mod tests {
 
     #[test]
     fn parse_precedence_and_or() {
-        // a or b and c should be a or (b and c)
         let stmts = parse("x = a or b and c").unwrap();
         match &stmts[0].node {
             Stmt::Assign { value, .. } => match &value.node {
@@ -467,12 +661,9 @@ mod tests {
                     op: BinOp::Or,
                     right,
                     ..
-                } => match &right.node {
-                    Expr::BinOp {
-                        op: BinOp::And, ..
-                    } => {}
-                    _ => panic!("expected And on right"),
-                },
+                } => {
+                    assert!(matches!(right.node, Expr::BinOp { op: BinOp::And, .. }));
+                }
                 _ => panic!("expected Or"),
             },
             _ => panic!("expected Assign"),
@@ -483,17 +674,15 @@ mod tests {
     fn parse_comparison() {
         let stmts = parse("x = a == b").unwrap();
         match &stmts[0].node {
-            Stmt::Assign { value, .. } => match &value.node {
-                Expr::BinOp { op: BinOp::Eq, .. } => {}
-                _ => panic!("expected Eq"),
-            },
+            Stmt::Assign { value, .. } => {
+                assert!(matches!(value.node, Expr::BinOp { op: BinOp::Eq, .. }));
+            }
             _ => panic!("expected Assign"),
         }
     }
 
     #[test]
     fn parse_parenthesized() {
-        // (1 + 2) * 3 should be (1 + 2) * 3
         let stmts = parse("x = (1 + 2) * 3").unwrap();
         match &stmts[0].node {
             Stmt::Assign { value, .. } => match &value.node {
@@ -501,12 +690,9 @@ mod tests {
                     left,
                     op: BinOp::Mul,
                     ..
-                } => match &left.node {
-                    Expr::BinOp {
-                        op: BinOp::Add, ..
-                    } => {}
-                    _ => panic!("expected Add on left"),
-                },
+                } => {
+                    assert!(matches!(left.node, Expr::BinOp { op: BinOp::Add, .. }));
+                }
                 _ => panic!("expected Mul"),
             },
             _ => panic!("expected Assign"),
@@ -531,14 +717,108 @@ mod tests {
     }
 
     #[test]
+    fn parse_while_loop() {
+        let stmts = parse("while x > 0\n  x = x - 1\nend").unwrap();
+        assert_eq!(stmts.len(), 1);
+        assert!(matches!(stmts[0].node, Stmt::While { .. }));
+    }
+
+    #[test]
     fn parse_if_stmt() {
         let stmts = parse("if x == 0\n  y = 1\nend").unwrap();
         assert_eq!(stmts.len(), 1);
+        assert!(matches!(stmts[0].node, Stmt::If { .. }));
+    }
+
+    #[test]
+    fn parse_fn_def() {
+        let stmts = parse("fn foo(a, b)\n  return a + b\nend").unwrap();
+        assert_eq!(stmts.len(), 1);
         match &stmts[0].node {
-            Stmt::If { body, .. } => {
+            Stmt::FnDef {
+                name, params, body, ..
+            } => {
+                assert_eq!(name, "foo");
+                assert_eq!(params.len(), 2);
+                assert_eq!(params[0].0, "a");
+                assert_eq!(params[1].0, "b");
                 assert_eq!(body.len(), 1);
             }
-            _ => panic!("expected If"),
+            _ => panic!("expected FnDef"),
+        }
+    }
+
+    #[test]
+    fn parse_fn_no_params() {
+        let stmts = parse("fn bar()\n  return 42\nend").unwrap();
+        match &stmts[0].node {
+            Stmt::FnDef { name, params, .. } => {
+                assert_eq!(name, "bar");
+                assert_eq!(params.len(), 0);
+            }
+            _ => panic!("expected FnDef"),
+        }
+    }
+
+    #[test]
+    fn parse_call_expr() {
+        let stmts = parse("x = foo(1, 2)").unwrap();
+        match &stmts[0].node {
+            Stmt::Assign { value, .. } => match &value.node {
+                Expr::Call { name, args, .. } => {
+                    assert_eq!(name, "foo");
+                    assert_eq!(args.len(), 2);
+                }
+                _ => panic!("expected Call"),
+            },
+            _ => panic!("expected Assign"),
+        }
+    }
+
+    #[test]
+    fn parse_index_expr() {
+        let stmts = parse("x = arr[i + 1]").unwrap();
+        match &stmts[0].node {
+            Stmt::Assign { value, .. } => match &value.node {
+                Expr::Index { name, .. } => {
+                    assert_eq!(name, "arr");
+                }
+                _ => panic!("expected Index"),
+            },
+            _ => panic!("expected Assign"),
+        }
+    }
+
+    #[test]
+    fn parse_index_assign() {
+        let stmts = parse("arr[0] = 5").unwrap();
+        match &stmts[0].node {
+            Stmt::IndexAssign { name, .. } => {
+                assert_eq!(name, "arr");
+            }
+            _ => panic!("expected IndexAssign"),
+        }
+    }
+
+    #[test]
+    fn parse_break() {
+        let stmts = parse("while 1\n  break\nend").unwrap();
+        match &stmts[0].node {
+            Stmt::While { body, .. } => {
+                assert!(matches!(body[0].node, Stmt::Break { .. }));
+            }
+            _ => panic!("expected While"),
+        }
+    }
+
+    #[test]
+    fn parse_return() {
+        let stmts = parse("fn f()\n  return 0\nend").unwrap();
+        match &stmts[0].node {
+            Stmt::FnDef { body, .. } => {
+                assert!(matches!(body[0].node, Stmt::Return { .. }));
+            }
+            _ => panic!("expected FnDef"),
         }
     }
 
@@ -551,9 +831,7 @@ mod tests {
             Stmt::For { body, .. } => {
                 assert_eq!(body.len(), 1);
                 match &body[0].node {
-                    Stmt::If { body, .. } => {
-                        assert_eq!(body.len(), 1);
-                    }
+                    Stmt::If { body, .. } => assert_eq!(body.len(), 1),
                     _ => panic!("expected If inside For"),
                 }
             }
@@ -576,7 +854,6 @@ mod tests {
     #[test]
     fn parse_span_tracking() {
         let stmts = parse("x = 10").unwrap();
-        // "x" at 0..1, "=" at 2..3, "10" at 4..6
         assert_eq!(stmts[0].span, Span { start: 0, end: 6 });
         match &stmts[0].node {
             Stmt::Assign {
@@ -593,6 +870,6 @@ mod tests {
     fn parse_euler_001() {
         let src = "total = 0\n\nfor i from 0 to 1000\n  if i % 3 == 0 or i % 5 == 0\n    total += i\n  end\nend\n\nprint total";
         let stmts = parse(src).unwrap();
-        assert_eq!(stmts.len(), 3); // assign, for, print
+        assert_eq!(stmts.len(), 3);
     }
 }

@@ -19,6 +19,9 @@ pub enum TokenKind {
     GtEq,
     LParen,
     RParen,
+    LBracket,
+    RBracket,
+    Comma,
     For,
     From,
     To,
@@ -27,6 +30,10 @@ pub enum TokenKind {
     Print,
     And,
     Or,
+    While,
+    Fn,
+    Return,
+    Break,
     Newline,
     Eof,
 }
@@ -108,6 +115,10 @@ pub fn lex(input: &str) -> Result<Vec<Token>, SpannedError> {
                 "print" => TokenKind::Print,
                 "and" => TokenKind::And,
                 "or" => TokenKind::Or,
+                "while" => TokenKind::While,
+                "fn" => TokenKind::Fn,
+                "return" => TokenKind::Return,
+                "break" => TokenKind::Break,
                 _ => TokenKind::Ident(word.to_string()),
             };
             tokens.push(Token {
@@ -284,6 +295,36 @@ pub fn lex(input: &str) -> Result<Vec<Token>, SpannedError> {
                 });
                 pos += 1;
             }
+            b'[' => {
+                tokens.push(Token {
+                    kind: TokenKind::LBracket,
+                    span: Span {
+                        start,
+                        end: pos + 1,
+                    },
+                });
+                pos += 1;
+            }
+            b']' => {
+                tokens.push(Token {
+                    kind: TokenKind::RBracket,
+                    span: Span {
+                        start,
+                        end: pos + 1,
+                    },
+                });
+                pos += 1;
+            }
+            b',' => {
+                tokens.push(Token {
+                    kind: TokenKind::Comma,
+                    span: Span {
+                        start,
+                        end: pos + 1,
+                    },
+                });
+                pos += 1;
+            }
             _ => {
                 return Err(SpannedError {
                     message: format!("unexpected character: '{}'", b as char),
@@ -327,7 +368,7 @@ mod tests {
     #[test]
     fn lex_identifiers_and_keywords() {
         assert_eq!(
-            kinds("for x from to end if print and or foo"),
+            kinds("for x from to end if print and or while fn return break foo"),
             vec![
                 TokenKind::For,
                 TokenKind::Ident("x".into()),
@@ -338,6 +379,10 @@ mod tests {
                 TokenKind::Print,
                 TokenKind::And,
                 TokenKind::Or,
+                TokenKind::While,
+                TokenKind::Fn,
+                TokenKind::Return,
+                TokenKind::Break,
                 TokenKind::Ident("foo".into()),
                 TokenKind::Eof,
             ]
@@ -435,6 +480,27 @@ mod tests {
         let err = lex("x @ y").unwrap_err();
         assert_eq!(err.message, "unexpected character: '@'");
         assert_eq!(err.span, Span { start: 2, end: 3 });
+    }
+
+    #[test]
+    fn lex_brackets_and_comma() {
+        assert_eq!(
+            kinds("arr[i] = foo(a, b)"),
+            vec![
+                TokenKind::Ident("arr".into()),
+                TokenKind::LBracket,
+                TokenKind::Ident("i".into()),
+                TokenKind::RBracket,
+                TokenKind::Eq,
+                TokenKind::Ident("foo".into()),
+                TokenKind::LParen,
+                TokenKind::Ident("a".into()),
+                TokenKind::Comma,
+                TokenKind::Ident("b".into()),
+                TokenKind::RParen,
+                TokenKind::Eof,
+            ]
+        );
     }
 
     #[test]

@@ -1,0 +1,20 @@
+# Project Euler Problem 2
+# Find the sum of even-valued Fibonacci terms not exceeding 4 million.
+#
+# The Fibonacci sequence: 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, ...
+# We iterate through it, summing only even terms.
+
+a = 1
+b = 2
+total = 0
+
+while a <= 4000000
+  if a % 2 == 0
+    total += a
+  end
+  temp = a + b
+  a = b
+  b = temp
+end
+
+print total

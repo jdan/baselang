@@ -1,0 +1,31 @@
+# Project Euler Problem 10
+# Find the sum of all primes below two million.
+#
+# We use the Sieve of Eratosthenes: create an array where index i
+# indicates whether i is prime (1) or not (0), then sum all primes.
+
+limit = 2000000
+sieve = array(limit, 1)
+sieve[0] = 0
+sieve[1] = 0
+
+i = 2
+while i * i < limit
+  if sieve[i] == 1
+    j = i * i
+    while j < limit
+      sieve[j] = 0
+      j = j + i
+    end
+  end
+  i = i + 1
+end
+
+sum = 0
+for i from 2 to limit
+  if sieve[i] == 1
+    sum = sum + i
+  end
+end
+
+print sum
