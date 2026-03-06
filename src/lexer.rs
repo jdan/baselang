@@ -117,6 +117,34 @@ pub fn lex(input: &str) -> Result<Vec<Token>, SpannedError> {
             continue;
         }
 
+        // $ identifiers (view references)
+        if b == b'$' {
+            let start = pos;
+            pos += 1;
+            if pos < bytes.len() && (bytes[pos].is_ascii_alphanumeric() || bytes[pos] == b'_') {
+                while pos < bytes.len()
+                    && (bytes[pos].is_ascii_alphanumeric() || bytes[pos] == b'_')
+                {
+                    pos += 1;
+                }
+                let word = &input[start..pos];
+                tokens.push(Token {
+                    kind: TokenKind::Ident(word.to_string()),
+                    span: Span { start, end: pos },
+                });
+                last_was_newline = false;
+                continue;
+            } else {
+                return Err(SpannedError {
+                    message: "expected identifier after '$'".to_string(),
+                    span: Span {
+                        start,
+                        end: start + 1,
+                    },
+                });
+            }
+        }
+
         // Identifiers and keywords
         if b.is_ascii_alphabetic() || b == b'_' {
             let start = pos;
@@ -519,6 +547,38 @@ mod tests {
                 TokenKind::Eof,
             ]
         );
+    }
+
+    #[test]
+    fn lex_dollar_ident() {
+        assert_eq!(
+            kinds("$abc = 1"),
+            vec![
+                TokenKind::Ident("$abc".into()),
+                TokenKind::Eq,
+                TokenKind::Int(1),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn lex_dollar_ident_hex() {
+        assert_eq!(
+            kinds("$e3a + $f7b"),
+            vec![
+                TokenKind::Ident("$e3a".into()),
+                TokenKind::Plus,
+                TokenKind::Ident("$f7b".into()),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn lex_dollar_alone_is_error() {
+        let err = lex("$ x").unwrap_err();
+        assert_eq!(err.message, "expected identifier after '$'");
     }
 
     #[test]

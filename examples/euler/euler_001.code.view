@@ -1,0 +1,12 @@
+{
+  "$e3a": {
+    "main": "sum",
+    "maths": "\u03a3",
+    "compact": "s"
+  },
+  "$f7b": {
+    "main": "i",
+    "maths": "n",
+    "compact": "i"
+  }
+}

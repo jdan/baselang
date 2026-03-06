@@ -1,12 +1,12 @@
 # Project Euler Problem 1
 # Find the sum of all multiples of 3 or 5 below 1000.
 
-sum = 0
+$e3a = 0
 
-for i from 1 to 1000
-  if i % 3 == 0 or i % 5 == 0
-    sum += i
+for $f7b from 1 to 1000
+  if $f7b % 3 == 0 or $f7b % 5 == 0
+    $e3a += $f7b
   end
 end
 
-print sum
+print $e3a

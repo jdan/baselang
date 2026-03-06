@@ -1,3 +1,6 @@
+-- Add editors/nvim to Lua path so require("baselang-views") works
+package.path = vim.fn.expand('~/Projects/baselang/editors/nvim/?.lua;') .. package.path
+
 vim.filetype.add({
   extension = {
     code = 'baselang',
@@ -22,6 +25,8 @@ vim.api.nvim_create_user_command('BaselangRestart', function()
   -- Re-trigger FileType so vim.lsp.start() runs again
   vim.cmd('edit')
 end, {})
+
+require("baselang-views").setup()
 
 vim.api.nvim_create_autocmd('LspAttach', {
   callback = function(args)
