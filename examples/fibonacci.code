@@ -1,0 +1,12 @@
+# Fibonacci
+
+$f1a = 10
+$c4d = 0
+$e7b = 1
+
+for $a3e from 0 to $f1a
+  print $c4d
+  $d9f = $e7b
+  $e7b = $c4d + $e7b
+  $c4d = $d9f
+end

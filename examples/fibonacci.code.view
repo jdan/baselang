@@ -1,0 +1,32 @@
+{
+  "$f1a": {
+    "main": "count",
+    "compact": "n",
+    "verbose": "number_of_terms",
+    "japanese": "\u9805\u6570"
+  },
+  "$c4d": {
+    "main": "current",
+    "compact": "a",
+    "verbose": "current_value",
+    "japanese": "\u73fe\u5728\u5024"
+  },
+  "$e7b": {
+    "main": "next",
+    "compact": "b",
+    "verbose": "next_value",
+    "japanese": "\u6b21\u306e\u5024"
+  },
+  "$a3e": {
+    "main": "i",
+    "compact": "i",
+    "verbose": "index",
+    "japanese": "\u756a\u53f7"
+  },
+  "$d9f": {
+    "main": "temp",
+    "compact": "t",
+    "verbose": "temporary_swap",
+    "japanese": "\u4e00\u6642"
+  }
+}
