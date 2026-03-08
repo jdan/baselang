@@ -1,0 +1,17 @@
+fn work_too_hard(n)
+  total = 0
+  for j from 0 to 4000
+    total += n * j
+  end
+  return total
+end
+
+fn slow_report(limit)
+  grand_total = 0
+  for i from 0 to limit
+    grand_total += work_too_hard(i)
+  end
+  return grand_total
+end
+
+print slow_report(250)

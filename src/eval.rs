@@ -1,6 +1,8 @@
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::time::Instant;
 
 use crate::ast::*;
 
@@ -36,19 +38,71 @@ enum Flow {
 type Env = HashMap<String, Value>;
 type Fns = HashMap<String, FnDef>;
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ExecutionMetric {
+    pub count: u64,
+    pub total_nanos: u128,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ExecutionMetrics {
+    pub by_offset: BTreeMap<usize, ExecutionMetric>,
+}
+
+impl ExecutionMetrics {
+    fn record(&mut self, span: Span, elapsed: std::time::Duration) {
+        let entry = self.by_offset.entry(span.start).or_default();
+        entry.count += 1;
+        entry.total_nanos += elapsed.as_nanos();
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EvalArtifacts {
+    pub output: Vec<String>,
+    pub metrics: ExecutionMetrics,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EvalFailure {
+    pub error: SpannedError,
+    pub metrics: ExecutionMetrics,
+}
+
 pub fn eval(stmts: &[Spanned<Stmt>]) -> Result<Vec<String>, SpannedError> {
+    eval_with_metrics(stmts)
+        .map(|artifacts| artifacts.output)
+        .map_err(|failure| failure.error)
+}
+
+pub fn eval_with_metrics(stmts: &[Spanned<Stmt>]) -> Result<EvalArtifacts, EvalFailure> {
     let mut env = Env::new();
     let mut fns = Fns::new();
     let mut output = Vec::new();
-    match eval_stmts(stmts, &mut env, &mut fns, &mut output)? {
-        Flow::Next => Ok(output),
-        Flow::Return(_) => Err(SpannedError {
-            message: "return outside of function".to_string(),
-            span: Span { start: 0, end: 0 },
+    let mut metrics = ExecutionMetrics::default();
+
+    let flow = match eval_stmts(stmts, &mut env, &mut fns, &mut output, &mut metrics) {
+        Ok(flow) => flow,
+        Err(error) => {
+            return Err(EvalFailure { error, metrics });
+        }
+    };
+
+    match flow {
+        Flow::Next => Ok(EvalArtifacts { output, metrics }),
+        Flow::Return(_) => Err(EvalFailure {
+            error: SpannedError {
+                message: "return outside of function".to_string(),
+                span: Span { start: 0, end: 0 },
+            },
+            metrics,
         }),
-        Flow::Break => Err(SpannedError {
-            message: "break outside of loop".to_string(),
-            span: Span { start: 0, end: 0 },
+        Flow::Break => Err(EvalFailure {
+            error: SpannedError {
+                message: "break outside of loop".to_string(),
+                span: Span { start: 0, end: 0 },
+            },
+            metrics,
         }),
     }
 }
@@ -58,9 +112,10 @@ fn eval_stmts(
     env: &mut Env,
     fns: &mut Fns,
     output: &mut Vec<String>,
+    metrics: &mut ExecutionMetrics,
 ) -> Result<Flow, SpannedError> {
     for stmt in stmts {
-        match eval_stmt(stmt, env, fns, output)? {
+        match eval_stmt(stmt, env, fns, output, metrics)? {
             Flow::Next => {}
             flow => return Ok(flow),
         }
@@ -73,12 +128,26 @@ fn eval_stmt(
     env: &mut Env,
     fns: &mut Fns,
     output: &mut Vec<String>,
+    metrics: &mut ExecutionMetrics,
+) -> Result<Flow, SpannedError> {
+    let started = Instant::now();
+    let result = eval_stmt_inner(stmt, env, fns, output, metrics);
+    metrics.record(stmt.span, started.elapsed());
+    result
+}
+
+fn eval_stmt_inner(
+    stmt: &Spanned<Stmt>,
+    env: &mut Env,
+    fns: &mut Fns,
+    output: &mut Vec<String>,
+    metrics: &mut ExecutionMetrics,
 ) -> Result<Flow, SpannedError> {
     match &stmt.node {
         Stmt::Assign {
             name, op, value, ..
         } => {
-            let val = eval_expr(value, env, fns, output)?;
+            let val = eval_expr(value, env, fns, output, metrics)?;
             match op {
                 AssignOp::Assign => {
                     env.insert(name.clone(), val);
@@ -95,13 +164,17 @@ fn eval_stmt(
             Ok(Flow::Next)
         }
         Stmt::For {
-            var, from, to, body, ..
+            var,
+            from,
+            to,
+            body,
+            ..
         } => {
-            let from_val = eval_expr(from, env, fns, output)?.as_int(from.span)?;
-            let to_val = eval_expr(to, env, fns, output)?.as_int(to.span)?;
+            let from_val = eval_expr(from, env, fns, output, metrics)?.as_int(from.span)?;
+            let to_val = eval_expr(to, env, fns, output, metrics)?.as_int(to.span)?;
             for i in from_val..to_val {
                 env.insert(var.clone(), Value::Int(i));
-                match eval_stmts(body, env, fns, output)? {
+                match eval_stmts(body, env, fns, output, metrics)? {
                     Flow::Next => {}
                     Flow::Break => break,
                     Flow::Return(v) => return Ok(Flow::Return(v)),
@@ -110,25 +183,25 @@ fn eval_stmt(
             Ok(Flow::Next)
         }
         Stmt::While { cond, body, .. } => loop {
-            let cond_val = eval_expr(cond, env, fns, output)?.as_int(cond.span)?;
+            let cond_val = eval_expr(cond, env, fns, output, metrics)?.as_int(cond.span)?;
             if cond_val == 0 {
                 return Ok(Flow::Next);
             }
-            match eval_stmts(body, env, fns, output)? {
+            match eval_stmts(body, env, fns, output, metrics)? {
                 Flow::Next => {}
                 Flow::Break => return Ok(Flow::Next),
                 Flow::Return(v) => return Ok(Flow::Return(v)),
             }
         },
         Stmt::If { cond, body, .. } => {
-            let cond_val = eval_expr(cond, env, fns, output)?.as_int(cond.span)?;
+            let cond_val = eval_expr(cond, env, fns, output, metrics)?.as_int(cond.span)?;
             if cond_val != 0 {
-                return eval_stmts(body, env, fns, output);
+                return eval_stmts(body, env, fns, output, metrics);
             }
             Ok(Flow::Next)
         }
         Stmt::Print { value, .. } => {
-            let val = eval_expr(value, env, fns, output)?;
+            let val = eval_expr(value, env, fns, output, metrics)?;
             output.push(match val {
                 Value::Int(n) => n.to_string(),
                 Value::Array(a) => format!("[array; len={}]", a.borrow().len()),
@@ -148,12 +221,12 @@ fn eval_stmt(
             Ok(Flow::Next)
         }
         Stmt::Return { value, .. } => {
-            let val = eval_expr(value, env, fns, output)?;
+            let val = eval_expr(value, env, fns, output, metrics)?;
             Ok(Flow::Return(val))
         }
         Stmt::Break { .. } => Ok(Flow::Break),
         Stmt::ExprStmt { value, .. } => {
-            eval_expr(value, env, fns, output)?;
+            eval_expr(value, env, fns, output, metrics)?;
             Ok(Flow::Next)
         }
         Stmt::IndexAssign {
@@ -163,8 +236,8 @@ fn eval_stmt(
             value,
             ..
         } => {
-            let idx = eval_expr(index, env, fns, output)?.as_int(index.span)?;
-            let val = eval_expr(value, env, fns, output)?.as_int(value.span)?;
+            let idx = eval_expr(index, env, fns, output, metrics)?.as_int(index.span)?;
+            let val = eval_expr(value, env, fns, output, metrics)?.as_int(value.span)?;
             let arr = env.get(name).ok_or_else(|| SpannedError {
                 message: format!("undefined variable: {name}"),
                 span: stmt.span,
@@ -198,21 +271,19 @@ fn eval_expr(
     env: &mut Env,
     fns: &mut Fns,
     output: &mut Vec<String>,
+    metrics: &mut ExecutionMetrics,
 ) -> Result<Value, SpannedError> {
     match &expr.node {
         Expr::Int(n) => Ok(Value::Int(*n)),
-        Expr::Var(name) => env
-            .get(name)
-            .cloned()
-            .ok_or_else(|| SpannedError {
-                message: format!("undefined variable: {name}"),
-                span: expr.span,
-            }),
+        Expr::Var(name) => env.get(name).cloned().ok_or_else(|| SpannedError {
+            message: format!("undefined variable: {name}"),
+            span: expr.span,
+        }),
         Expr::BinOp {
             left, op, right, ..
         } => {
-            let l = eval_expr(left, env, fns, output)?.as_int(left.span)?;
-            let r = eval_expr(right, env, fns, output)?.as_int(right.span)?;
+            let l = eval_expr(left, env, fns, output, metrics)?.as_int(left.span)?;
+            let r = eval_expr(right, env, fns, output, metrics)?.as_int(right.span)?;
             Ok(Value::Int(match op {
                 BinOp::Add => l + r,
                 BinOp::Sub => l - r,
@@ -249,7 +320,7 @@ fn eval_expr(
             // Evaluate arguments first
             let mut arg_vals = Vec::new();
             for arg in args {
-                arg_vals.push(eval_expr(arg, env, fns, output)?);
+                arg_vals.push(eval_expr(arg, env, fns, output, metrics)?);
             }
 
             // Built-in: array(size, default)
@@ -262,9 +333,10 @@ fn eval_expr(
                 }
                 let size = arg_vals[0].as_int(args[0].span)?;
                 let default = arg_vals[1].as_int(args[1].span)?;
-                return Ok(Value::Array(Rc::new(RefCell::new(
-                    vec![default; size as usize],
-                ))));
+                return Ok(Value::Array(Rc::new(RefCell::new(vec![
+                    default;
+                    size as usize
+                ]))));
             }
 
             // Built-in: len(arr)
@@ -306,7 +378,7 @@ fn eval_expr(
             for (param, val) in params.iter().zip(arg_vals) {
                 local_env.insert(param.clone(), val);
             }
-            match eval_stmts(&body, &mut local_env, fns, output)? {
+            match eval_stmts(&body, &mut local_env, fns, output, metrics)? {
                 Flow::Return(v) => Ok(v),
                 Flow::Break => Err(SpannedError {
                     message: "break outside of loop".to_string(),
@@ -316,7 +388,7 @@ fn eval_expr(
             }
         }
         Expr::Index { name, index, .. } => {
-            let idx = eval_expr(index, env, fns, output)?.as_int(index.span)?;
+            let idx = eval_expr(index, env, fns, output, metrics)?.as_int(index.span)?;
             let arr = env.get(name).ok_or_else(|| SpannedError {
                 message: format!("undefined variable: {name}"),
                 span: expr.span,
@@ -345,6 +417,7 @@ fn eval_expr(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::observe;
     use crate::parser;
 
     fn run(source: &str) -> Vec<String> {
@@ -355,6 +428,11 @@ mod tests {
     fn run_err(source: &str) -> String {
         let stmts = parser::parse(source).unwrap();
         eval(&stmts).unwrap_err().message
+    }
+
+    fn run_with_metrics(source: &str) -> EvalArtifacts {
+        let stmts = parser::parse(source).unwrap();
+        eval_with_metrics(&stmts).unwrap()
     }
 
     #[test]
@@ -410,7 +488,9 @@ mod tests {
     #[test]
     fn eval_break_in_for() {
         assert_eq!(
-            run("s = 0\nfor i from 0 to 100\n  if i == 3\n    break\n  end\n  s += i\nend\nprint s"),
+            run(
+                "s = 0\nfor i from 0 to 100\n  if i == 3\n    break\n  end\n  s += i\nend\nprint s"
+            ),
             vec!["3"]
         );
     }
@@ -483,6 +563,25 @@ mod tests {
     fn eval_euler_001() {
         let src = "total = 0\n\nfor i from 0 to 1000\n  if i % 3 == 0 or i % 5 == 0\n    total += i\n  end\nend\n\nprint total";
         assert_eq!(run(src), vec!["233168"]);
+    }
+
+    #[test]
+    fn eval_collects_line_metrics() {
+        let src = "fn square_slow(n)\n  total = 0\n  for j from 0 to n\n    total += n\n  end\n  return total\nend\n\nsum = 0\nfor i from 0 to 4\n  sum += square_slow(i)\nend\nprint sum";
+        let artifacts = run_with_metrics(src);
+        let report = observe::build_report(src, &artifacts.metrics);
+        let counts = report
+            .lines
+            .iter()
+            .map(|entry| (entry.line, entry.count))
+            .collect::<std::collections::BTreeMap<_, _>>();
+
+        assert_eq!(counts.get(&2), Some(&4));
+        assert_eq!(counts.get(&3), Some(&4));
+        assert_eq!(counts.get(&4), Some(&6));
+        assert_eq!(counts.get(&6), Some(&4));
+        assert_eq!(counts.get(&10), Some(&1));
+        assert_eq!(counts.get(&11), Some(&4));
     }
 
     #[test]

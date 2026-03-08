@@ -1,12 +1,62 @@
-# Fibonacci
+# Fibonacci observability demo
+#
+# This file is meant to be opened in Neovim after running it once.
+# The observability gutter should make the difference between the
+# recursive and dynamic-programming versions immediately obvious.
 
-$f1a = 10
-$c4d = 0
-$e7b = 1
+fn $f1a($n1)
+  # The recursive version mirrors the mathematical definition.
+  # It is compact and easy to read, but it repeats work heavily.
+  if $n1 <= 1
+    # Base cases: fib(0) = 0 and fib(1) = 1.
+    return $n1
+  end
 
-for $a3e from 0 to $f1a
-  print $c4d
-  $d9f = $e7b
-  $e7b = $c4d + $e7b
-  $c4d = $d9f
+  # This is the expensive part.
+  # Every call fans out into two more calls, which means the same
+  # smaller Fibonacci values are recomputed over and over again.
+  return $f1a($n1 - 1) + $f1a($n1 - 2)
 end
+
+fn $d2b($n1)
+  # The dynamic-programming version stores earlier answers and builds
+  # the sequence from the bottom up.
+  if $n1 <= 1
+    # The small inputs are still handled directly.
+    return $n1
+  end
+
+  # Allocate an array large enough to hold fib(0) through fib(n).
+  $a4d = array($n1 + 1, 0)
+
+  # Seed the second Fibonacci value so the loop can build from there.
+  $a4d[1] = 1
+
+  # Fill in the table one slot at a time.
+  # Each value is computed exactly once from the two values before it.
+  for $i3c from 2 to $n1 + 1
+    $a4d[$i3c] = $a4d[$i3c - 1] + $a4d[$i3c - 2]
+  end
+
+  # Return the cached result for fib(n).
+  return $a4d[$n1]
+end
+
+fn $m5e()
+  # Use the same input for both implementations so their behavior can
+  # be compared directly in the observability view.
+  $s6f = 12
+
+  # First print the recursive answer.
+  print $f1a($s6f)
+
+  # Then print the dynamic-programming answer.
+  print $d2b($s6f)
+
+  # Return a dummy value because baselang functions currently return
+  # integers rather than a unit-like value.
+  return 0
+end
+
+# Run the demo.
+$m5e()

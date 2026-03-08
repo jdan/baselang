@@ -1,36 +1,33 @@
 -- baselang-views.lua
 --
 -- Projectional editing for baselang: display $-identifiers using
--- human-readable names from a .view sidecar file.
---
--- The cursor line always shows raw $IDs for editing.
--- All other lines show projected names.
---
--- Setup:
---   require("baselang-views").setup()
---
--- Commands:
---   :BaselangView           -- list available view modes
---   :BaselangView main      -- switch to "main" view
---   :BaselangView maths     -- switch to "maths" view
---   :BaselangView off       -- disable views (show raw $IDs)
+-- human-readable names from a .view sidecar file, plus per-line
+-- observability loaded from a .observability.json sidecar.
 
 local M = {}
 local ns = vim.api.nvim_create_namespace("baselang_views")
 
+local heatmap_groups = {
+  "BaselangObsCold",
+  "BaselangObsCool",
+  "BaselangObsWarm",
+  "BaselangObsHot",
+  "BaselangObsBlaze",
+}
+
 M.current_mode = "main"
 M.enabled = true
 
--- Track cursor line per buffer to avoid redundant work
 local cursor_lines = {}
+local metrics_by_buf = {}
+local metric_width = 15
 
-function M.load_views(buf)
-  local filename = vim.api.nvim_buf_get_name(buf)
-  if filename == "" then
-    return nil
-  end
+local function with_suffix(path, suffix)
+  return path .. suffix
+end
 
-  local f = io.open(filename .. ".view", "r")
+local function read_json_file(path)
+  local f = io.open(path, "r")
   if not f then
     return nil
   end
@@ -46,7 +43,146 @@ function M.load_views(buf)
   return data
 end
 
--- Apply extmarks for a single line
+local function current_source(buf)
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  local source = table.concat(lines, "\n")
+  if vim.bo[buf].endofline then
+    source = source .. "\n"
+  end
+  return source
+end
+
+local function format_duration(avg_nanos)
+  if avg_nanos >= 1000000000 then
+    return string.format("%.2fs", avg_nanos / 1000000000)
+  end
+  if avg_nanos >= 1000000 then
+    return string.format("%.1fms", avg_nanos / 1000000)
+  end
+  if avg_nanos >= 1000 then
+    return string.format("%.1fus", avg_nanos / 1000)
+  end
+  return string.format("%dns", avg_nanos)
+end
+
+local function format_count(count)
+  if count >= 1000000 then
+    return string.format("%.1fm", count / 1000000)
+  end
+  if count >= 1000 then
+    return string.format("%.1fk", count / 1000)
+  end
+  return tostring(count)
+end
+
+local function load_metrics(buf)
+  local filename = vim.api.nvim_buf_get_name(buf)
+  if filename == "" then
+    metrics_by_buf[buf] = nil
+    return
+  end
+
+  local report = read_json_file(with_suffix(filename, ".observability.json"))
+  if not report then
+    metrics_by_buf[buf] = nil
+    return
+  end
+
+  if report.file_hash ~= vim.fn.sha256(current_source(buf)) then
+    metrics_by_buf[buf] = nil
+    return
+  end
+
+  local lines = {}
+  local max_count = 0
+  local max_avg_nanos = 0
+  for _, entry in ipairs(report.lines or {}) do
+    lines[entry.line] = entry
+    max_count = math.max(max_count, entry.count or 0)
+    max_avg_nanos = math.max(max_avg_nanos, entry.avg_nanos or 0)
+  end
+
+  metrics_by_buf[buf] = {
+    lines = lines,
+    max_count = max_count,
+    max_avg_nanos = max_avg_nanos,
+  }
+end
+
+function M.metric_text(buf, lnum)
+  local metrics = metrics_by_buf[buf]
+  if not metrics then
+    return string.rep(" ", metric_width)
+  end
+
+  local entry = metrics.lines[lnum]
+  if not entry then
+    return string.rep(" ", metric_width)
+  end
+
+  local text = string.format("%sx %s", format_count(entry.count), format_duration(entry.avg_nanos))
+  if #text > metric_width then
+    return text:sub(1, metric_width)
+  end
+  return string.rep(" ", metric_width - #text) .. text
+end
+
+function M.metric_highlight(buf, lnum)
+  local metrics = metrics_by_buf[buf]
+  if not metrics then
+    return "LineNr"
+  end
+
+  local entry = metrics.lines[lnum]
+  if not entry then
+    return "LineNr"
+  end
+
+  local count_ratio = 0
+  local time_ratio = 0
+
+  if metrics.max_count > 0 then
+    count_ratio = entry.count / metrics.max_count
+  end
+  if metrics.max_avg_nanos > 0 then
+    time_ratio = entry.avg_nanos / metrics.max_avg_nanos
+  end
+
+  local score = math.max(count_ratio, time_ratio)
+  if score >= 0.85 then
+    return heatmap_groups[5]
+  end
+  if score >= 0.55 then
+    return heatmap_groups[4]
+  end
+  if score >= 0.30 then
+    return heatmap_groups[3]
+  end
+  if score > 0 then
+    return heatmap_groups[2]
+  end
+  return heatmap_groups[1]
+end
+
+function M.statuscolumn()
+  if vim.v.virtnum ~= 0 then
+    return ""
+  end
+
+  local buf = vim.api.nvim_get_current_buf()
+  local hl = M.metric_highlight(buf, vim.v.lnum)
+  return "%#" .. hl .. "#" .. M.metric_text(buf, vim.v.lnum) .. "%#LineNr# " .. string.format("%4d ", vim.v.lnum)
+end
+
+function M.load_views(buf)
+  local filename = vim.api.nvim_buf_get_name(buf)
+  if filename == "" then
+    return nil
+  end
+
+  return read_json_file(with_suffix(filename, ".view"))
+end
+
 local function apply_line(buf, lnum, line, views, mode)
   local start = 1
   while true do
@@ -69,7 +205,6 @@ local function apply_line(buf, lnum, line, views, mode)
   end
 end
 
--- Clear extmarks on a single line
 local function clear_line(buf, lnum)
   local marks = vim.api.nvim_buf_get_extmarks(buf, ns, { lnum, 0 }, { lnum, -1 }, {})
   for _, m in ipairs(marks) do
@@ -77,7 +212,6 @@ local function clear_line(buf, lnum)
   end
 end
 
--- Apply views to entire buffer, skipping the cursor line
 function M.apply_views(buf, mode)
   mode = mode or M.current_mode
   vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
@@ -102,7 +236,6 @@ function M.apply_views(buf, mode)
   end
 end
 
--- Handle cursor movement: reveal raw IDs on cursor line, project on previous line
 local function on_cursor_moved(buf)
   if not M.enabled then
     return
@@ -120,7 +253,6 @@ local function on_cursor_moved(buf)
     return
   end
 
-  -- Restore projections on the line we just left
   if prev then
     clear_line(buf, prev)
     local lines = vim.api.nvim_buf_get_lines(buf, prev, prev + 1, false)
@@ -129,10 +261,30 @@ local function on_cursor_moved(buf)
     end
   end
 
-  -- Clear projections on the line we moved to
   clear_line(buf, cursor_line)
-
   cursor_lines[buf] = cursor_line
+end
+
+local function refresh(buf)
+  load_metrics(buf)
+  if vim.api.nvim_buf_is_valid(buf) then
+    vim.opt_local.number = true
+    vim.opt_local.numberwidth = 4
+    vim.opt_local.statuscolumn = "%!v:lua.require'baselang-views'.statuscolumn()"
+    if M.enabled and M.load_views(buf) then
+      vim.opt_local.conceallevel = 3
+    end
+    M.apply_views(buf)
+    vim.cmd("redrawstatus")
+  end
+end
+
+local function set_heatmap_highlights()
+  vim.api.nvim_set_hl(0, "BaselangObsCold", { fg = "#5f6b76" })
+  vim.api.nvim_set_hl(0, "BaselangObsCool", { fg = "#6ea8a1", bold = true })
+  vim.api.nvim_set_hl(0, "BaselangObsWarm", { fg = "#d1a65a", bold = true })
+  vim.api.nvim_set_hl(0, "BaselangObsHot", { fg = "#dd7a4b", bold = true })
+  vim.api.nvim_set_hl(0, "BaselangObsBlaze", { fg = "#d14d41", bold = true })
 end
 
 function M.set_mode(mode)
@@ -196,13 +348,16 @@ local function complete_modes()
 end
 
 function M.setup()
-  vim.api.nvim_create_autocmd({ "BufEnter", "BufWritePost", "TextChanged", "TextChangedI" }, {
+  set_heatmap_highlights()
+
+  vim.api.nvim_create_autocmd("ColorScheme", {
+    callback = set_heatmap_highlights,
+  })
+
+  vim.api.nvim_create_autocmd({ "BufEnter", "BufWritePost", "TextChanged", "TextChangedI", "CursorHold", "FocusGained" }, {
     pattern = "*.code",
     callback = function(ev)
-      if M.enabled and M.load_views(ev.buf) then
-        vim.opt_local.conceallevel = 3
-      end
-      M.apply_views(ev.buf)
+      refresh(ev.buf)
     end,
   })
 
@@ -210,6 +365,14 @@ function M.setup()
     pattern = "*.code",
     callback = function(ev)
       on_cursor_moved(ev.buf)
+    end,
+  })
+
+  vim.api.nvim_create_autocmd("BufLeave", {
+    pattern = "*.code",
+    callback = function(ev)
+      metrics_by_buf[ev.buf] = nil
+      cursor_lines[ev.buf] = nil
     end,
   })
 

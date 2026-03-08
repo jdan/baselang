@@ -1,13 +1,15 @@
 use std::io::Read;
+use std::path::Path;
 
-use baselang::{eval, parser};
+use baselang::{eval, observe, parser};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    let file_path = args.get(1).map(Path::new);
 
-    let source = if args.len() > 1 {
-        std::fs::read_to_string(&args[1]).unwrap_or_else(|e| {
-            eprintln!("error reading {}: {e}", args[1]);
+    let source = if let Some(path) = file_path {
+        std::fs::read_to_string(path).unwrap_or_else(|e| {
+            eprintln!("error reading {}: {e}", path.display());
             std::process::exit(1);
         })
     } else {
@@ -28,16 +30,32 @@ fn main() {
         }
     };
 
-    match eval::eval(&stmts) {
-        Ok(output) => {
-            for line in output {
+    match eval::eval_with_metrics(&stmts) {
+        Ok(artifacts) => {
+            persist_observability(file_path, &source, &artifacts.metrics);
+            for line in artifacts.output {
                 println!("{line}");
             }
         }
-        Err(e) => {
-            eprintln!("runtime error: {}", e.message);
+        Err(failure) => {
+            persist_observability(file_path, &source, &failure.metrics);
+            eprintln!("runtime error: {}", failure.error.message);
             std::process::exit(1);
         }
+    }
+}
+
+fn persist_observability(file_path: Option<&Path>, source: &str, metrics: &eval::ExecutionMetrics) {
+    let Some(file_path) = file_path else {
+        return;
+    };
+
+    let report = observe::build_report(source, metrics);
+    if let Err(err) = observe::write_report(file_path, &report) {
+        eprintln!(
+            "warning: failed to write {}: {err}",
+            observe::observability_path(file_path).display()
+        );
     }
 }
 

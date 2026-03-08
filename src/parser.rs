@@ -235,10 +235,7 @@ impl Parser {
                 start: return_span.start,
                 end: value.span.end,
             },
-            node: Stmt::Return {
-                return_span,
-                value,
-            },
+            node: Stmt::Return { return_span, value },
         })
     }
 
@@ -705,7 +702,11 @@ mod tests {
         assert_eq!(stmts.len(), 1);
         match &stmts[0].node {
             Stmt::For {
-                var, body, from, to, ..
+                var,
+                body,
+                from,
+                to,
+                ..
             } => {
                 assert_eq!(var, "i");
                 assert_eq!(from.node, Expr::Int(0));

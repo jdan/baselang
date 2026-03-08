@@ -399,11 +399,7 @@ mod tests {
     use super::*;
 
     fn kinds(input: &str) -> Vec<TokenKind> {
-        lex(input)
-            .unwrap()
-            .into_iter()
-            .map(|t| t.kind)
-            .collect()
+        lex(input).unwrap().into_iter().map(|t| t.kind).collect()
     }
 
     #[test]

@@ -1,32 +1,44 @@
 {
   "$f1a": {
-    "main": "count",
+    "main": "fib_recursive",
+    "compact": "fr",
+    "verbose": "fibonacci_recursive",
+    "japanese": "\u518d\u5e30\u30d5\u30a3\u30dc\u30ca\u30c3\u30c1"
+  },
+  "$n1": {
+    "main": "n",
     "compact": "n",
-    "verbose": "number_of_terms",
-    "japanese": "\u9805\u6570"
+    "verbose": "input_number",
+    "japanese": "\u5165\u529b"
   },
-  "$c4d": {
-    "main": "current",
-    "compact": "a",
-    "verbose": "current_value",
-    "japanese": "\u73fe\u5728\u5024"
+  "$d2b": {
+    "main": "fib_dp",
+    "compact": "fd",
+    "verbose": "fibonacci_dynamic_programming",
+    "japanese": "\u52d5\u7684\u8a08\u753b\u30d5\u30a3\u30dc\u30ca\u30c3\u30c1"
   },
-  "$e7b": {
-    "main": "next",
-    "compact": "b",
-    "verbose": "next_value",
-    "japanese": "\u6b21\u306e\u5024"
+  "$a4d": {
+    "main": "memo",
+    "compact": "m",
+    "verbose": "memoized_values",
+    "japanese": "\u30e1\u30e2"
   },
-  "$a3e": {
+  "$i3c": {
     "main": "i",
     "compact": "i",
     "verbose": "index",
     "japanese": "\u756a\u53f7"
   },
-  "$d9f": {
-    "main": "temp",
-    "compact": "t",
-    "verbose": "temporary_swap",
-    "japanese": "\u4e00\u6642"
+  "$m5e": {
+    "main": "main",
+    "compact": "main",
+    "verbose": "main_entrypoint",
+    "japanese": "\u30e1\u30a4\u30f3"
+  },
+  "$s6f": {
+    "main": "sample",
+    "compact": "s",
+    "verbose": "sample_input",
+    "japanese": "\u4f8b"
   }
 }

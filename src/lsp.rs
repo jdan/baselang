@@ -266,10 +266,7 @@ fn collect_stmt_tokens(stmt: &Spanned<Stmt>, tokens: &mut Vec<RawToken>) {
             }
             tokens.push((end_span.start, span_len(end_span), KEYWORD));
         }
-        Stmt::Return {
-            return_span,
-            value,
-        } => {
+        Stmt::Return { return_span, value } => {
             tokens.push((return_span.start, span_len(return_span), KEYWORD));
             collect_expr_tokens(value, tokens);
         }
@@ -346,11 +343,7 @@ pub struct Defs {
     fns: Vec<(String, Span)>,
 }
 
-pub fn find_def_in_stmts(
-    stmts: &[Spanned<Stmt>],
-    offset: usize,
-    defs: &mut Defs,
-) -> Option<Span> {
+pub fn find_def_in_stmts(stmts: &[Spanned<Stmt>], offset: usize, defs: &mut Defs) -> Option<Span> {
     for stmt in stmts {
         if let Some(span) = find_def_in_stmt(stmt, offset, defs) {
             return Some(span);
@@ -359,11 +352,7 @@ pub fn find_def_in_stmts(
     None
 }
 
-fn find_def_in_stmt(
-    stmt: &Spanned<Stmt>,
-    offset: usize,
-    defs: &mut Defs,
-) -> Option<Span> {
+fn find_def_in_stmt(stmt: &Spanned<Stmt>, offset: usize, defs: &mut Defs) -> Option<Span> {
     if offset < stmt.span.start || offset >= stmt.span.end {
         record_defs(stmt, defs);
         return None;
@@ -475,11 +464,7 @@ fn find_def_in_stmt(
     }
 }
 
-fn find_def_in_expr(
-    expr: &Spanned<Expr>,
-    offset: usize,
-    defs: &Defs,
-) -> Option<Span> {
+fn find_def_in_expr(expr: &Spanned<Expr>, offset: usize, defs: &Defs) -> Option<Span> {
     if offset < expr.span.start || offset >= expr.span.end {
         return None;
     }
@@ -494,8 +479,9 @@ fn find_def_in_expr(
             None
         }
         Expr::Int(_) => None,
-        Expr::BinOp { left, right, .. } => find_def_in_expr(left, offset, defs)
-            .or_else(|| find_def_in_expr(right, offset, defs)),
+        Expr::BinOp { left, right, .. } => {
+            find_def_in_expr(left, offset, defs).or_else(|| find_def_in_expr(right, offset, defs))
+        }
         Expr::Call {
             name,
             name_span,
