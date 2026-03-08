@@ -1,0 +1,76 @@
+# Dead code observability demo
+#
+# This version is intentionally less obvious than `use_fallback = 0`.
+# The unused path sits behind a realistic-looking condition computed from
+# data flowing through a small pipeline.
+#
+# The program first normalizes incoming readings so they are never
+# negative. Later, a legacy recovery path still checks whether any value
+# is negative and would run an expensive fallback if so.
+#
+# A linter may not flag that fallback as dead:
+# - the function is referenced
+# - the branch condition depends on runtime data
+# - everything is valid and reachable in principle
+#
+# But observability makes it obvious which lines never execute for the
+# workload that actually matters.
+
+fn normalize_readings(values, size)
+  for i from 0 to size
+    if values[i] < 0
+      values[i] = 0
+    end
+  end
+  return 0
+end
+
+fn has_negative(values, size)
+  for i from 0 to size
+    if values[i] < 0
+      return 1
+    end
+  end
+  return 0
+end
+
+fn active_pipeline(values, size)
+  total = 0
+  for i from 0 to size
+    total += values[i] * 3
+  end
+  return total
+end
+
+fn legacy_recovery_pipeline(values, size)
+  # This code is still callable and looks plausible, but after the
+  # normalization step above it never runs for this workload.
+  total = 0
+  for i from 0 to size
+    total += values[i] * values[i] * 2
+  end
+  return total
+end
+
+fn main()
+  size = 6
+  readings = array(size, 0)
+  readings[0] = 12
+  readings[1] = 0 - 3
+  readings[2] = 8
+  readings[3] = 5
+  readings[4] = 0 - 1
+  readings[5] = 9
+
+  # This cleanup step ensures the later legacy branch never fires.
+  normalize_readings(readings, size)
+
+  if has_negative(readings, size)
+    print legacy_recovery_pipeline(readings, size)
+  end
+
+  print active_pipeline(readings, size)
+  return 0
+end
+
+main()

@@ -8,6 +8,7 @@ local M = {}
 local ns = vim.api.nvim_create_namespace("baselang_views")
 
 local heatmap_groups = {
+  "BaselangObsZero",
   "BaselangObsCold",
   "BaselangObsCool",
   "BaselangObsWarm",
@@ -75,6 +76,23 @@ local function format_count(count)
   return tostring(count)
 end
 
+local function executable_line(buf, lnum)
+  local line = vim.api.nvim_buf_get_lines(buf, lnum - 1, lnum, false)[1] or ""
+  local trimmed = vim.trim(line)
+
+  if trimmed == "" then
+    return false
+  end
+  if trimmed:sub(1, 1) == "#" then
+    return false
+  end
+  if trimmed == "end" then
+    return false
+  end
+
+  return true
+end
+
 local function load_metrics(buf)
   local filename = vim.api.nvim_buf_get_name(buf)
   if filename == "" then
@@ -117,6 +135,9 @@ function M.metric_text(buf, lnum)
 
   local entry = metrics.lines[lnum]
   if not entry then
+    if executable_line(buf, lnum) then
+      return string.rep(" ", metric_width - 8) .. "?? never"
+    end
     return string.rep(" ", metric_width)
   end
 
@@ -135,6 +156,9 @@ function M.metric_highlight(buf, lnum)
 
   local entry = metrics.lines[lnum]
   if not entry then
+    if executable_line(buf, lnum) then
+      return heatmap_groups[1]
+    end
     return "LineNr"
   end
 
@@ -150,18 +174,18 @@ function M.metric_highlight(buf, lnum)
 
   local score = math.max(count_ratio, time_ratio)
   if score >= 0.85 then
-    return heatmap_groups[5]
+    return heatmap_groups[6]
   end
   if score >= 0.55 then
-    return heatmap_groups[4]
+    return heatmap_groups[5]
   end
   if score >= 0.30 then
-    return heatmap_groups[3]
+    return heatmap_groups[4]
   end
   if score > 0 then
-    return heatmap_groups[2]
+    return heatmap_groups[3]
   end
-  return heatmap_groups[1]
+  return heatmap_groups[2]
 end
 
 function M.statuscolumn()
@@ -280,6 +304,7 @@ local function refresh(buf)
 end
 
 local function set_heatmap_highlights()
+  vim.api.nvim_set_hl(0, "BaselangObsZero", { fg = "#7e8791", bold = true, italic = true })
   vim.api.nvim_set_hl(0, "BaselangObsCold", { fg = "#5f6b76" })
   vim.api.nvim_set_hl(0, "BaselangObsCool", { fg = "#6ea8a1", bold = true })
   vim.api.nvim_set_hl(0, "BaselangObsWarm", { fg = "#d1a65a", bold = true })
